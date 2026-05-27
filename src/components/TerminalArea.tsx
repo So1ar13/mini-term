@@ -4,6 +4,7 @@ import { useAppStore, genId, saveLayoutToConfig } from '../store';
 import { SplitLayout } from './SplitLayout';
 import { showContextMenu } from '../utils/contextMenu';
 import { getProjectEnvs } from '../utils/projectEnv';
+import { registerShellCommand } from '../utils/terminalCache';
 import type { TerminalTab, PaneState, SplitNode, ShellConfig } from '../types';
 
 interface Props {
@@ -62,6 +63,7 @@ export function TerminalArea({ projectId, projectPath }: Props) {
       cwd: projectPath,
       envs: getProjectEnvs(projectId),
     });
+    registerShellCommand(ptyId, shell.command);
 
     const paneId = genId();
     const tabId = genId();
@@ -109,6 +111,7 @@ export function TerminalArea({ projectId, projectPath }: Props) {
         cwd: projectPath,
         envs: getProjectEnvs(projectId),
       });
+      registerShellCommand(ptyId, shell.command);
 
       const newPane: PaneState = {
         id: genId(),

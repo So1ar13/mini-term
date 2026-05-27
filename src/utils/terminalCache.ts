@@ -19,6 +19,7 @@ import type { PtyOutputPayload } from '../types';
 import { getResolvedTheme } from './themeManager';
 import { createPtyWriteQueue } from './ptyWriteQueue';
 import { getCurrentLineSnapshotFromBuffer } from './terminalSnapshot';
+import { initSuggest, disposeSuggest, handleSuggestOnData, getActiveSuggestionSuffix, clearSuggestion } from './shellSuggest';
 
 export interface CachedTerminal {
   term: Terminal;
@@ -155,6 +156,13 @@ const cache = new Map<number, CachedEntry>();
 
 const aiPtyIds = new Set<number>();
 
+/** ptyId → shell command 映射，用于自动建议系统加载对应 shell 的历史记录 */
+const shellCommandByPty = new Map<number, string>();
+
+export function registerShellCommand(ptyId: number, shellCommand: string): void {
+  shellCommandByPty.set(ptyId, shellCommand);
+}
+
 export function markAiPty(ptyId: number, isAi: boolean) {
   if (isAi) aiPtyIds.add(ptyId);
   else aiPtyIds.delete(ptyId);
@@ -204,6 +212,12 @@ function getCurrentLineSnapshot(term: Terminal): string | undefined {
 export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   const existing = cache.get(ptyId);
   if (existing) return existing;
+
+  // 初始化自动建议系统
+  const shellCmd = shellCommandByPty.get(ptyId);
+  if (shellCmd) {
+    initSuggest(ptyId, shellCmd);
+  }
 
   // 创建 wrapper 容器，xterm.js 会在其中渲染
   const wrapper = document.createElement('div');
@@ -293,6 +307,21 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   // 事件也通过 triggerDataEvent 发出 CSI I/CSI O。这不是用户按键,如果也跟着
   // scrollToBottom,用户往上翻历史时一切焦点(点别处或切回来)就会被打回底部。
   const onDataDisp = term.onData((data) => {
+    // 自动建议系统拦截：Right 键接受建议 / Up/Down 浏览历史
+    if (handleSuggestOnData(ptyId, term, data)) {
+      return; // 事件已被建议系统消费
+    }
+
+    // Right 键接受建议后，发送剩余字符到 PTY
+    if (data === '\x1b[C') {
+      const suffix = getActiveSuggestionSuffix(ptyId);
+      if (suffix) {
+        clearSuggestion(ptyId);
+        void enqueuePtyWrite(ptyId, suffix);
+        return;
+      }
+    }
+
     const lineSnapshot = isStandaloneEnter(data)
       ? getCurrentLineSnapshot(term)
       : undefined;
@@ -347,6 +376,8 @@ export function getCachedTerminal(ptyId: number): CachedTerminal | undefined {
 export function disposeTerminal(ptyId: number): void {
   const entry = cache.get(ptyId);
   if (!entry) return;
+  disposeSuggest(ptyId);
+  shellCommandByPty.delete(ptyId);
   entry.wrapper.remove();
   entry.cleanup();
   cache.delete(ptyId);

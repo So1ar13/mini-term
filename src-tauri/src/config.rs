@@ -271,7 +271,7 @@ impl Default for AppConfig {
 
 #[cfg(target_os = "windows")]
 fn default_shell_name() -> String {
-    "cmd".into()
+    "powershell".into()
 }
 
 #[cfg(target_os = "macos")]
@@ -293,11 +293,6 @@ fn default_shell_name() -> String {
 fn default_shells() -> Vec<ShellConfig> {
     vec![
         ShellConfig {
-            name: "cmd".into(),
-            command: "cmd".into(),
-            args: None,
-        },
-        ShellConfig {
             name: "powershell".into(),
             command: "powershell".into(),
             args: None,
@@ -305,6 +300,11 @@ fn default_shells() -> Vec<ShellConfig> {
         ShellConfig {
             name: "pwsh".into(),
             command: "pwsh".into(),
+            args: None,
+        },
+        ShellConfig {
+            name: "cmd".into(),
+            command: "cmd".into(),
             args: None,
         },
     ]

@@ -7,7 +7,7 @@ import { StatusDot } from './StatusDot';
 import { MarkerList } from './MarkerList';
 import { showContextMenu } from '../utils/contextMenu';
 import { showConfirm, showPrompt } from '../utils/prompt';
-import { disposeTerminal } from '../utils/terminalCache';
+import { disposeTerminal, registerShellCommand } from '../utils/terminalCache';
 import { getProjectEnvs } from '../utils/projectEnv';
 import { MOD_LABEL } from '../utils/platform';
 import type { SplitNode, PaneState, ShellConfig, AiMarker } from '../types';
@@ -63,6 +63,7 @@ export function PaneGroup({ projectId, node, projectPath, onSplit, onClosePane, 
       envs: getProjectEnvs(projectId),
     })
       .then((ptyId) => {
+        registerShellCommand(ptyId, shell.command);
         const ps = useAppStore.getState().projectStates.get(projectId);
         const pane = ps?.tabs
           .map((tab) => findPaneById(tab.splitLayout, activePane.id))
@@ -102,6 +103,7 @@ export function PaneGroup({ projectId, node, projectPath, onSplit, onClosePane, 
       cwd: projectPath,
       envs: getProjectEnvs(projectId),
     });
+    registerShellCommand(ptyId, shell.command);
 
     const newPane: PaneState = {
       id: genId(),
