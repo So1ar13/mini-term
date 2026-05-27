@@ -5,7 +5,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
-import { useAppStore, restoreLayout, flushLayoutToConfig, initExpandedDirs, flushExpandedDirsToConfig, flushProjectToConfig, persistConfig } from './store';
+import { useAppStore, restoreLayout, flushLayoutToConfig, initExpandedDirs, flushExpandedDirsToConfig, flushProjectToConfig, persistConfig, genId, saveLayoutToConfig } from './store';
 import { TerminalArea } from './components/TerminalArea';
 import { ProjectList } from './components/ProjectList';
 import { FileTree } from './components/FileTree';
@@ -24,7 +24,7 @@ import { applyTheme } from './utils/themeManager';
 import { applyUiFontFamily } from './utils/fontManager';
 import { markAiPty, updateAllTerminalThemes } from './utils/terminalCache';
 import { includeActiveProject } from './utils/projectKeepAlive';
-import type { AppConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } from './types';
+import type { AppConfig, ProjectConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } from './types';
 
 export function App() {
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -163,6 +163,64 @@ export function App() {
       });
     }, []),
   );
+
+  // 监听右键菜单「用 Mini-Term 打开」事件
+  useTauriEvent<string>('open-project', useCallback((folderPath: string) => {
+    const store = useAppStore.getState();
+    const existing = store.config.projects.find((p) => p.path === folderPath);
+    if (existing) {
+      // 项目已存在，直接切换
+      store.setActiveProject(existing.id);
+    } else {
+      // 添加新项目
+      const name = folderPath.split(/[/\\]/).filter(Boolean).pop() ?? folderPath;
+      const project: ProjectConfig = {
+        id: genId(),
+        name,
+        path: folderPath,
+      };
+      store.addProject(project);
+      store.setActiveProject(project.id);
+    }
+    // 自动打开 PowerShell 终端（延迟等待项目切换完成）
+    setTimeout(() => {
+      const { activeProjectId, config: cfg, projectStates } = useAppStore.getState();
+      if (!activeProjectId) return;
+      const shell = cfg.availableShells.find((s) => s.command.toLowerCase().includes('powershell'))
+        ?? cfg.availableShells.find((s) => s.command.toLowerCase().includes('pwsh'))
+        ?? cfg.availableShells[0];
+      if (!shell) return;
+      const ps = projectStates.get(activeProjectId);
+      // 只在没有任何 tab 时自动创建终端
+      if (ps && ps.tabs.length === 0) {
+        invoke<number>('create_pty', {
+          shell: shell.command,
+          args: shell.args ?? [],
+          cwd: folderPath,
+          envs: [],
+        }).then((ptyId) => {
+          const paneId = genId();
+          const tabId = genId();
+          const tab = {
+            id: tabId,
+            status: 'idle' as const,
+            splitLayout: {
+              type: 'leaf' as const,
+              panes: [{
+                id: paneId,
+                shellName: shell.name,
+                status: 'idle' as const,
+                ptyId,
+              }],
+              activePaneId: paneId,
+            },
+          };
+          useAppStore.getState().addTab(activeProjectId, tab);
+          saveLayoutToConfig(activeProjectId);
+        });
+      }
+    }, 300);
+  }, []));
 
   useAiSubmitMarker();
   useMarkerHotkeys();

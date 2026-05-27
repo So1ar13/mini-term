@@ -562,11 +562,15 @@ function SystemSettings() {
   const [addingEditor, setAddingEditor] = useState(false);
   const [newEditorName, setNewEditorName] = useState('');
   const [newEditorCommand, setNewEditorCommand] = useState('');
+  const [contextMenuRegistered, setContextMenuRegistered] = useState(false);
+  const [contextMenuLoading, setContextMenuLoading] = useState(false);
 
   useEffect(() => {
     setEditors([...config.editors]);
     setDefaultEditorName(config.defaultEditor ?? '');
     setAddingEditor(false);
+    // 检查右键菜单注册状态
+    invoke<boolean>('is_context_menu_registered').then(setContextMenuRegistered).catch(() => {});
   }, [config]);
 
   const saveEditors = useCallback(async (updatedEditors: EditorConfig[], updatedDefault: string) => {
@@ -667,8 +671,53 @@ function SystemSettings() {
     invoke('save_config', { config: newConfig });
   }, [setConfig]);
 
+  const handleContextMenuToggle = useCallback(async () => {
+    setContextMenuLoading(true);
+    try {
+      if (contextMenuRegistered) {
+        await invoke('unregister_context_menu');
+        setContextMenuRegistered(false);
+      } else {
+        const exePath = await invoke<string>('get_exe_path');
+        await invoke('register_context_menu', { exePath });
+        setContextMenuRegistered(true);
+      }
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setContextMenuLoading(false);
+    }
+  }, [contextMenuRegistered]);
+
   return (
     <div className="space-y-6">
+      {/* Windows 右键菜单 */}
+      <div className="text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">
+        系统集成
+      </div>
+
+      <div className="flex items-center justify-between px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)]">
+        <div className="pr-4">
+          <div className="text-base text-[var(--text-primary)]">右键菜单「用 Mini-Term 打开」</div>
+          <div className="text-sm text-[var(--text-muted)]">
+            在 Windows 资源管理器右键文件夹时显示菜单项
+          </div>
+        </div>
+        <button
+          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+            contextMenuRegistered ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]'
+          } ${contextMenuLoading ? 'opacity-50' : ''}`}
+          onClick={handleContextMenuToggle}
+          disabled={contextMenuLoading}
+        >
+          <span
+            className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white transition-transform ${
+              contextMenuRegistered ? 'translate-x-[18px]' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
       {/* 主题模式 */}
       <div className="text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">
         主题

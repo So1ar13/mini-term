@@ -11,9 +11,10 @@ mod pty;
 mod search;
 mod shell_history;
 mod ssh;
+mod shell_integration;
 mod ssh_mcp_registry;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(windows)]
 extern "system" {
@@ -27,6 +28,25 @@ const VK_LBUTTON: i32 = 0x01;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // 第二个实例启动时，将文件夹路径转发给已有窗口
+            if args.len() > 1 {
+                let folder_path = args[1].clone();
+                // 激活主窗口
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                    let _ = window.unminimize();
+                }
+                // 发送事件给前端
+                let _ = app.emit("open-project", &folder_path);
+            } else {
+                // 没有参数时只是激活窗口
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                    let _ = window.unminimize();
+                }
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -41,6 +61,18 @@ pub fn run() {
             config::migrate_legacy_app_data(app.handle());
             clipboard::cleanup_old_clipboard_images();
             ssh::cleanup_ssh_temp_keys();
+
+            // 首次启动时检查是否有命令行参数（从右键菜单启动）
+            let args: Vec<String> = std::env::args().collect();
+            if args.len() > 1 {
+                let folder_path = args[1].clone();
+                // 延迟发送事件，等前端准备好
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let _ = app_handle.emit("open-project", &folder_path);
+                });
+            }
 
             // 初始化 hook 状态并注册为 Tauri managed state
             let hook_state = hook_server::HookState::new();
@@ -130,6 +162,10 @@ pub fn run() {
             shell_history::debug_log,
             ssh_mcp_registry::enable_ssh_mcp,
             ssh_mcp_registry::disable_ssh_mcp,
+            shell_integration::register_context_menu,
+            shell_integration::unregister_context_menu,
+            shell_integration::is_context_menu_registered,
+            shell_integration::get_exe_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -36,6 +36,7 @@ git2 = "0.19"
 pathdiff = "0.2"
 tiny_http = "0.12"
 toml_edit = "0.22"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -47,3 +48,4 @@ windows = { version = "0.58", features = [
   "Win32_Graphics_Gdi",
 ] }
 image = "0.25"
+winreg = "0.52"
