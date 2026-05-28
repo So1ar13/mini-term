@@ -241,18 +241,22 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
   const buffer = term.buffer.active;
   const { cellWidth, cellHeight } = getCellSize(term);
   const zoom = getRootZoom();
-  const rect = screen.getBoundingClientRect();
-  // 检查 cursor 元素的实际位置
-  const cursorEl = term.element?.querySelector('.xterm-cursor-layer') as HTMLElement | null;
-  const cursorRect = cursorEl?.getBoundingClientRect();
-  invoke('debug_log', { msg: `[suggest] zoom=${zoom} screen=${rect.width}x${rect.height} offset=${screen.offsetWidth}x${screen.offsetHeight} scrollLeft=${screen.scrollLeft} cursor=${buffer.cursorX},${buffer.cursorY} cell=${cellWidth.toFixed(2)}x${cellHeight.toFixed(2)} pos=${(buffer.cursorX * cellWidth).toFixed(1)},${(buffer.cursorY * cellHeight).toFixed(1)} cursorLayer=${cursorRect ? `${cursorRect.left.toFixed(1)},${cursorRect.top.toFixed(1)} ${cursorRect.width.toFixed(1)}x${cursorRect.height.toFixed(1)}` : 'null'} ghost_offsetParent=${screen === document.elementFromPoint(rect.left, rect.top) ? 'screen' : 'other'}` });
+  const screenRect = screen.getBoundingClientRect();
+
+  // 测量 screen 内部 padding（文本区域偏移）
+  // xterm-screen 内部有 viewport padding，直接用 cursorX * cellWidth 会偏大
+  // 通过比较 screen 物理宽度和 cols * cellWidth 来估算左 padding
+  const totalPaddingX = (screenRect.width / zoom - term.cols * cellWidth);
+  const padLeft = totalPaddingX > 0 ? totalPaddingX / 2 : 0;
+  const totalPaddingY = (screenRect.height / zoom - term.rows * cellHeight);
+  const padTop = totalPaddingY > 0 ? totalPaddingY / 2 : 0;
 
   const ghost = document.createElement('span');
   ghost.textContent = suffix;
   ghost.style.cssText = `
     position: absolute;
-    left: ${buffer.cursorX * cellWidth}px;
-    top: ${buffer.cursorY * cellHeight}px;
+    left: ${padLeft + buffer.cursorX * cellWidth}px;
+    top: ${padTop + buffer.cursorY * cellHeight}px;
     height: ${cellHeight}px;
     line-height: ${cellHeight}px;
     color: rgba(255, 255, 255, 0.3);
@@ -266,9 +270,7 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
   screen.appendChild(ghost);
   state.ghostEl = ghost;
   const ghostRect = ghost.getBoundingClientRect();
-  const op = ghost.offsetParent as HTMLElement | null;
-  const opRect = op?.getBoundingClientRect();
-  invoke('debug_log', { msg: `[suggest] ghost viewport=${ghostRect.left.toFixed(1)},${ghostRect.top.toFixed(1)} offsetParent=${op?.className?.slice(0,30)} op_rect=${opRect ? `${opRect.left.toFixed(1)},${opRect.top.toFixed(1)}` : 'null'} ghost_offsetLeft=${ghost.offsetLeft}` });
+  invoke('debug_log', { msg: `[suggest] padLeft=${padLeft.toFixed(1)} padTop=${padTop.toFixed(1)} ghost_viewport=${ghostRect.left.toFixed(1)},${ghostRect.top.toFixed(1)} screen_viewport=${screenRect.left.toFixed(1)},${screenRect.top.toFixed(1)}` });
 }
 
 // ---------------------------------------------------------------------------
@@ -303,16 +305,20 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
 
   const buffer = term.buffer.active;
   const { cellHeight } = getCellSize(term);
+  const zoom = getRootZoom();
+  const screenRect = screen.getBoundingClientRect();
+  const totalPaddingY = (screenRect.height / zoom - term.rows * cellHeight);
+  const padTop = totalPaddingY > 0 ? totalPaddingY / 2 : 0;
 
   // 列表面板定位在光标行上方
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: absolute;
     left: 0;
-    top: ${(buffer.cursorY + 1) * cellHeight}px;
+    top: ${padTop + (buffer.cursorY + 1) * cellHeight}px;
     max-height: ${Math.min(matches.length, 10) * cellHeight + 8}px;
-    min-width: ${Math.max(screen.getBoundingClientRect().width / getRootZoom(), 300)}px;
-    max-width: ${screen.getBoundingClientRect().width / getRootZoom()}px;
+    min-width: ${Math.max(screenRect.width / zoom, 300)}px;
+    max-width: ${screenRect.width / zoom}px;
     overflow-y: auto;
     background: var(--bg-terminal, #0a0908);
     border: 1px solid var(--border-color, #2a2824);
