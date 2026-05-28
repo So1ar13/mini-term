@@ -45,6 +45,7 @@ export interface AppConfig {
   hookEnabled: boolean;
   smartCopyPaste: boolean;
   sshConnections: SshConnection[];
+  uiZoom?: number;
 }
 
 export interface ProjectConfig {

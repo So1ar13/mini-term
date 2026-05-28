@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow, PhysicalSize } from '@tauri-apps/api/window';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -520,19 +521,23 @@ function FontSizeSlider({
   value,
   min,
   max,
+  step,
+  displayValue,
   onChange,
 }: {
   label: string;
   value: number;
   min: number;
   max: number;
+  step?: number;
+  displayValue?: string;
   onChange: (v: number) => void;
 }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-base text-[var(--text-primary)]">{label}</span>
-        <span className="text-base font-mono text-[var(--accent)]">{value}px</span>
+        <span className="text-base font-mono text-[var(--accent)]">{displayValue ?? `${value}px`}</span>
       </div>
       <div className="flex items-center gap-3">
         <span className="text-sm text-[var(--text-muted)]">{min}</span>
@@ -540,7 +545,7 @@ function FontSizeSlider({
           type="range"
           min={min}
           max={max}
-          step={1}
+          step={step ?? 1}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className="flex-1 accent-[var(--accent)] h-1.5 cursor-pointer"
@@ -909,6 +914,41 @@ function FontSettings() {
     invoke('save_config', { config: newConfig });
   }, [setConfig]);
 
+  const zoomResizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zoomBaseSize = useRef<{ w: number; h: number; zoom: number } | null>(null);
+
+  const handleUiZoomChange = useCallback((percent: number) => {
+    const zoom = percent / 100;
+    const oldZoom = useAppStore.getState().config.uiZoom ?? 1;
+    const newConfig = { ...useAppStore.getState().config, uiZoom: zoom };
+    setConfig(newConfig);
+    // CSS zoom 即时生效，给用户视觉反馈
+    document.body.style.zoom = `${zoom}`;
+
+    // 首次拖动时记录基准窗口尺寸（100% zoom 时的物理尺寸）
+    if (!zoomBaseSize.current || zoomBaseSize.current.zoom !== oldZoom) {
+      getCurrentWindow().innerSize().then((size) => {
+        zoomBaseSize.current = { w: size.width, h: size.height, zoom: oldZoom };
+      });
+    }
+
+    // debounce 窗口 resize，避免疯狂闪动
+    if (zoomResizeTimer.current) clearTimeout(zoomResizeTimer.current);
+    zoomResizeTimer.current = setTimeout(() => {
+      const base = zoomBaseSize.current;
+      if (base) {
+        const scale = zoom / base.zoom;
+        const newW = Math.round(base.w * scale);
+        const newH = Math.round(base.h * scale);
+        getCurrentWindow().setSize(new PhysicalSize(newW, newH)).then(() => {
+          zoomBaseSize.current = { w: newW, h: newH, zoom };
+          window.dispatchEvent(new Event('resize'));
+        });
+      }
+      invoke('save_config', { config: useAppStore.getState().config });
+    }, 150);
+  }, [setConfig]);
+
   return (
     <div className="space-y-6">
       <div className="text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">
@@ -933,6 +973,24 @@ function FontSettings() {
 
       <div className="pt-3 text-sm text-[var(--text-muted)]">
         界面字体影响侧栏、标签页等 UI 元素 · 终端字体影响终端内文字显示
+      </div>
+
+      <div className="pt-4 text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">
+        缩放
+      </div>
+
+      <FontSizeSlider
+        label="界面缩放"
+        value={Math.round((config.uiZoom ?? 1) * 100)}
+        min={100}
+        max={150}
+        step={10}
+        displayValue={`${Math.round((config.uiZoom ?? 1) * 100)}%`}
+        onChange={handleUiZoomChange}
+      />
+
+      <div className="pt-3 text-sm text-[var(--text-muted)]">
+        调整整个界面的显示比例
       </div>
 
       <div className="pt-4 text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Allotment } from 'allotment';
 import { invoke } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
-import { getCurrentWindow } from '@tauri-apps/api/window';
+import { getCurrentWindow, PhysicalSize } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { useAppStore, restoreLayout, flushLayoutToConfig, initExpandedDirs, flushExpandedDirsToConfig, flushProjectToConfig, persistConfig, genId, saveLayoutToConfig } from './store';
@@ -46,6 +46,18 @@ export function App() {
       // 应用 UI 字体大小
       if (cfg.uiFontSize) {
         document.documentElement.style.fontSize = `${cfg.uiFontSize}px`;
+      }
+      if (cfg.uiZoom && cfg.uiZoom !== 1) {
+        document.body.style.zoom = `${cfg.uiZoom}`;
+        window.dispatchEvent(new Event('resize'));
+        // window-state 恢复的尺寸已含 zoom，缩小到基准尺寸避免双重放大
+        const appWindow = getCurrentWindow();
+        appWindow.innerSize().then((size) => {
+          const baseW = Math.round(size.width / cfg.uiZoom!);
+          const baseH = Math.round(size.height / cfg.uiZoom!);
+          invoke('debug_log', { msg: `[zoom] startup: phys=${size.width}x${size.height} zoom=${cfg.uiZoom} → ${baseW}x${baseH}` });
+          return appWindow.setSize(new PhysicalSize(baseW, baseH));
+        }).catch((e) => invoke('debug_log', { msg: `[zoom] startup error: ${e}` }));
       }
       applyUiFontFamily(cfg.uiFontFamily);
       const { projectStates } = useAppStore.getState();

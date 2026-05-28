@@ -106,6 +106,12 @@ pub struct AppConfig {
     pub smart_copy_paste: bool,
     #[serde(default)]
     pub ssh_connections: Vec<SshConnection>,
+    #[serde(default = "default_ui_zoom")]
+    pub ui_zoom: f64,
+}
+
+fn default_ui_zoom() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,6 +274,7 @@ impl Default for AppConfig {
             hook_enabled: false,
             smart_copy_paste: false,
             ssh_connections: vec![],
+            ui_zoom: default_ui_zoom(),
         }
     }
 }
