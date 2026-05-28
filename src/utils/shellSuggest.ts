@@ -416,14 +416,25 @@ function updateSuggestion(ptyId: number, term: Terminal): void {
   const history = historyByShell.get(state.shellCommand);
   if (!history || history.length === 0) return;
 
-  // 如果列表面板打开着，不更新 ghost text
-  if (state.listEl) return;
-
   const buffer = term.buffer.active;
   const cursorLine = buffer.baseY + buffer.cursorY;
   const line = getCurrentLineSnapshotFromBuffer(buffer, cursorLine, buffer.cursorX);
 
   const input = stripPrompt(line ?? '');
+
+  // 输入清空时关闭历史列表面板和 ghost text
+  if (!input) {
+    state.activeSuggestion = null;
+    state.historyIndex = -1;
+    state.historyMatches = [];
+    removeGhostEl(state);
+    removeListEl(state);
+    state.currentInput = '';
+    return;
+  }
+
+  // 列表面板打开时不更新 ghost text（由面板上下键控制）
+  if (state.listEl) return;
 
   if (input !== state.currentInput) {
     state.historyIndex = -1;
@@ -431,12 +442,6 @@ function updateSuggestion(ptyId: number, term: Terminal): void {
   }
 
   state.currentInput = input;
-
-  if (!input) {
-    state.activeSuggestion = null;
-    removeGhostEl(state);
-    return;
-  }
 
   const match = findBestMatch(input, history);
   state.activeSuggestion = match;
