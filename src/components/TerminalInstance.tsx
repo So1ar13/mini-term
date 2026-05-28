@@ -146,6 +146,17 @@ export function TerminalInstance({ ptyId }: Props) {
     });
     observer.observe(container);
 
+    // CSS zoom 不改变 clientWidth/Height，需手动触发 fit
+    const onZoomChange = () => {
+      requestAnimationFrame(() => {
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          fitAddon.fit();
+          term.refresh(0, term.rows - 1);
+        }
+      });
+    };
+    window.addEventListener('zoom-changed', onZoomChange);
+
     const visibilityObserver = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) {
         requestAnimationFrame(() => {
@@ -161,6 +172,7 @@ export function TerminalInstance({ ptyId }: Props) {
       clearTimeout(settleId);
       observer.disconnect();
       visibilityObserver.disconnect();
+      window.removeEventListener('zoom-changed', onZoomChange);
       wrapper.remove();
     };
   }, [ptyId]);

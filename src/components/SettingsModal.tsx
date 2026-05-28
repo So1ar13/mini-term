@@ -924,6 +924,7 @@ function FontSettings() {
     setConfig(newConfig);
     // CSS zoom 即时生效，给用户视觉反馈
     document.body.style.zoom = `${zoom}`;
+    window.dispatchEvent(new Event('zoom-changed'));
 
     // 首次拖动时记录基准窗口尺寸（100% zoom 时的物理尺寸）
     if (!zoomBaseSize.current || zoomBaseSize.current.zoom !== oldZoom) {
