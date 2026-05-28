@@ -238,25 +238,25 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
   const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
   if (!screen) return;
 
-  const buffer = term.buffer.active;
-  const { cellWidth, cellHeight } = getCellSize(term);
-  const zoom = getRootZoom();
-  const screenRect = screen.getBoundingClientRect();
+  const { cellHeight } = getCellSize(term);
 
-  // 测量 screen 内部 padding（文本区域偏移）
-  // xterm-screen 内部有 viewport padding，直接用 cursorX * cellWidth 会偏大
-  // 通过比较 screen 物理宽度和 cols * cellWidth 来估算左 padding
-  const totalPaddingX = (screenRect.width / zoom - term.cols * cellWidth);
-  const padLeft = totalPaddingX > 0 ? totalPaddingX / 2 : 0;
-  const totalPaddingY = (screenRect.height / zoom - term.rows * cellHeight);
-  const padTop = totalPaddingY > 0 ? totalPaddingY / 2 : 0;
+  // 用 xterm 的 helper-textarea 定位，它由 xterm 精确放在光标位置
+  const helper = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement | null;
+  if (!helper) return;
+  const helperRect = helper.getBoundingClientRect();
+  const screenRect = screen.getBoundingClientRect();
+  const zoom = getRootZoom();
+
+  // helperRect 是 viewport 坐标，转为 screen 的 CSS 像素坐标
+  const ghostLeft = (helperRect.left - screenRect.left) / zoom;
+  const ghostTop = (helperRect.top - screenRect.top) / zoom;
 
   const ghost = document.createElement('span');
   ghost.textContent = suffix;
   ghost.style.cssText = `
     position: absolute;
-    left: ${padLeft + buffer.cursorX * cellWidth}px;
-    top: ${padTop + buffer.cursorY * cellHeight}px;
+    left: ${ghostLeft}px;
+    top: ${ghostTop}px;
     height: ${cellHeight}px;
     line-height: ${cellHeight}px;
     color: rgba(255, 255, 255, 0.3);
@@ -269,8 +269,6 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
 
   screen.appendChild(ghost);
   state.ghostEl = ghost;
-  const ghostRect = ghost.getBoundingClientRect();
-  invoke('debug_log', { msg: `[suggest] padLeft=${padLeft.toFixed(1)} padTop=${padTop.toFixed(1)} ghost_viewport=${ghostRect.left.toFixed(1)},${ghostRect.top.toFixed(1)} screen_viewport=${screenRect.left.toFixed(1)},${screenRect.top.toFixed(1)}` });
 }
 
 // ---------------------------------------------------------------------------
@@ -303,19 +301,22 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
   const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
   if (!screen) return;
 
-  const buffer = term.buffer.active;
   const { cellHeight } = getCellSize(term);
   const zoom = getRootZoom();
   const screenRect = screen.getBoundingClientRect();
-  const totalPaddingY = (screenRect.height / zoom - term.rows * cellHeight);
-  const padTop = totalPaddingY > 0 ? totalPaddingY / 2 : 0;
 
-  // 列表面板定位在光标行上方
+  // 用 helper-textarea 获取光标行的 Y 位置
+  const helper = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement | null;
+  const helperTop = helper
+    ? (helper.getBoundingClientRect().top - screenRect.top) / zoom
+    : term.buffer.active.cursorY * cellHeight;
+
+  // 列表面板定位在光标行下方
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: absolute;
     left: 0;
-    top: ${padTop + (buffer.cursorY + 1) * cellHeight}px;
+    top: ${helperTop + cellHeight}px;
     max-height: ${Math.min(matches.length, 10) * cellHeight + 8}px;
     min-width: ${Math.max(screenRect.width / zoom, 300)}px;
     max-width: ${screenRect.width / zoom}px;
