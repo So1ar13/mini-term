@@ -242,7 +242,10 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
   const { cellWidth, cellHeight } = getCellSize(term);
   const zoom = getRootZoom();
   const rect = screen.getBoundingClientRect();
-  invoke('debug_log', { msg: `[suggest] zoom=${zoom} screen=${rect.width}x${rect.height} offset=${screen.offsetWidth}x${screen.offsetHeight} cursor=${buffer.cursorX},${buffer.cursorY} cell=${cellWidth.toFixed(2)}x${cellHeight.toFixed(2)} pos=${(buffer.cursorX * cellWidth).toFixed(1)},${(buffer.cursorY * cellHeight).toFixed(1)}` });
+  // 检查 cursor 元素的实际位置
+  const cursorEl = term.element?.querySelector('.xterm-cursor-layer') as HTMLElement | null;
+  const cursorRect = cursorEl?.getBoundingClientRect();
+  invoke('debug_log', { msg: `[suggest] zoom=${zoom} screen=${rect.width}x${rect.height} offset=${screen.offsetWidth}x${screen.offsetHeight} scrollLeft=${screen.scrollLeft} cursor=${buffer.cursorX},${buffer.cursorY} cell=${cellWidth.toFixed(2)}x${cellHeight.toFixed(2)} pos=${(buffer.cursorX * cellWidth).toFixed(1)},${(buffer.cursorY * cellHeight).toFixed(1)} cursorLayer=${cursorRect ? `${cursorRect.left.toFixed(1)},${cursorRect.top.toFixed(1)} ${cursorRect.width.toFixed(1)}x${cursorRect.height.toFixed(1)}` : 'null'} ghost_offsetParent=${screen === document.elementFromPoint(rect.left, rect.top) ? 'screen' : 'other'}` });
 
   const ghost = document.createElement('span');
   ghost.textContent = suffix;
@@ -263,7 +266,9 @@ function showGhostText(term: Terminal, state: SuggestState, suggestion: string):
   screen.appendChild(ghost);
   state.ghostEl = ghost;
   const ghostRect = ghost.getBoundingClientRect();
-  invoke('debug_log', { msg: `[suggest] ghost rendered at viewport=${ghostRect.left.toFixed(1)},${ghostRect.top.toFixed(1)} screen_rect=${rect.left.toFixed(1)},${rect.top.toFixed(1)}` });
+  const op = ghost.offsetParent as HTMLElement | null;
+  const opRect = op?.getBoundingClientRect();
+  invoke('debug_log', { msg: `[suggest] ghost viewport=${ghostRect.left.toFixed(1)},${ghostRect.top.toFixed(1)} offsetParent=${op?.className?.slice(0,30)} op_rect=${opRect ? `${opRect.left.toFixed(1)},${opRect.top.toFixed(1)}` : 'null'} ghost_offsetLeft=${ghost.offsetLeft}` });
 }
 
 // ---------------------------------------------------------------------------
