@@ -128,6 +128,7 @@ pub fn run() {
             fs::create_directory,
             fs::read_file_content,
             fs::write_file_content,
+            fs::write_text_file,
             fs::rename_entry,
             fs::delete_entry,
             fs::filter_directories,

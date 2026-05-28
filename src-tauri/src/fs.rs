@@ -359,6 +359,11 @@ pub fn write_file_content(project_root: String, path: String, content: String) -
 }
 
 #[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn create_file(project_root: String, path: String) -> Result<(), String> {
     let p = verify_under_project_root(&project_root, &path, false)?;
     if p.exists() {

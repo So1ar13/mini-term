@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -48,6 +49,7 @@ export function SessionViewerModal({ open, onClose, session, projectPath }: Prop
   const [search, setSearch] = useState('');
   const [matchIdx, setMatchIdx] = useState(0);
   const [userIdx, setUserIdx] = useState(-1);
+  const [chatLayout, setChatLayout] = useState(true);
 
   const msgRefs = useRef<(HTMLDivElement | null)[]>([]);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -78,6 +80,8 @@ export function SessionViewerModal({ open, onClose, session, projectPath }: Prop
     () => messages.reduce<number[]>((acc, m, i) => { if (m.role === 'user') acc.push(i); return acc; }, []),
     [messages],
   );
+
+  const [hoveredDot, setHoveredDot] = useState<number | null>(null);
 
   const q = search.trim().toLowerCase();
 
@@ -142,6 +146,32 @@ export function SessionViewerModal({ open, onClose, session, projectPath }: Prop
     msgRefs.current[userIndices[next]]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
+  const exportSession = async () => {
+    if (messages.length === 0) return;
+    const typeName = session?.sessionType === 'claude' ? 'Claude' : 'Codex';
+    const lines = [
+      `# ${typeName} Session: ${session?.title ?? ''}`,
+      `Exported: ${new Date().toISOString()}`,
+      `Messages: ${messages.length}`,
+      '',
+      '---',
+      '',
+    ];
+    for (const msg of messages) {
+      const role = msg.role === 'user' ? '## User' : '## Assistant';
+      const time = msg.timestamp ? ` (${formatTime(msg.timestamp)})` : '';
+      lines.push(`${role}${time}`, '', msg.content, '', '---', '');
+    }
+    const content = lines.join('\n');
+    const defaultName = `${session?.title ?? 'session'}.md`.replace(/[<>:"/\\|?*]/g, '_');
+    const filePath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: 'Markdown', extensions: ['md'] }, { name: 'Text', extensions: ['txt'] }],
+    });
+    if (!filePath) return;
+    await invoke('write_text_file', { path: filePath, content });
+  };
+
   if (!open || !session) return null;
 
   const typeName = session.sessionType === 'claude' ? 'Claude' : 'Codex';
@@ -173,6 +203,33 @@ export function SessionViewerModal({ open, onClose, session, projectPath }: Prop
           </div>
 
           <div className="flex items-center gap-3 flex-shrink-0 ml-2">
+            {/* 布局切换 */}
+            <div className="flex rounded-[var(--radius-sm)] border border-[var(--border-default)] overflow-hidden text-xs">
+              <button
+                className={`px-2 py-1 transition-colors ${chatLayout ? 'bg-[var(--accent)] text-[var(--bg-base)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                onClick={() => setChatLayout(true)}
+                title="对话布局"
+              >
+                对话
+              </button>
+              <button
+                className={`px-2 py-1 transition-colors ${!chatLayout ? 'bg-[var(--accent)] text-[var(--bg-base)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+                onClick={() => setChatLayout(false)}
+                title="列表布局"
+              >
+                列表
+              </button>
+            </div>
+            {/* 导出按钮 */}
+            {messages.length > 0 && (
+              <button
+                className="px-2 py-0.5 rounded-[var(--radius-sm)] text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
+                onClick={exportSession}
+                title="导出为文件"
+              >
+                导出
+              </button>
+            )}
             {/* User 消息快速导航 */}
             {userIndices.length > 0 && (
               <div className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
@@ -222,54 +279,131 @@ export function SessionViewerModal({ open, onClose, session, projectPath }: Prop
           </div>
         )}
 
-        {/* 消息列表 */}
-        <div className="flex-1 overflow-auto bg-[var(--bg-base)] p-4 space-y-4">
-          {loading && <div className="flex items-center justify-center h-full text-[var(--text-muted)]">加载中...</div>}
-          {error && <div className="flex items-center justify-center h-full text-[var(--color-error)]">{error}</div>}
-          {!loading && !error && messages.length === 0 && (
-            <div className="flex items-center justify-center h-full text-[var(--text-muted)]">无消息内容</div>
-          )}
+        {/* 消息列表 + 时间轴 */}
+        <div className="flex-1 flex overflow-hidden bg-[var(--bg-base)]">
+          <div className="flex-1 overflow-auto p-4 space-y-3">
+            {loading && <div className="flex items-center justify-center h-full text-[var(--text-muted)]">加载中...</div>}
+            {error && <div className="flex items-center justify-center h-full text-[var(--color-error)]">{error}</div>}
+            {!loading && !error && messages.length === 0 && (
+              <div className="flex items-center justify-center h-full text-[var(--text-muted)]">无消息内容</div>
+            )}
 
-          {messages.map((msg, i) => (
-            <div
-              key={i}
-              ref={(el) => { msgRefs.current[i] = el; }}
-              className={isCurrentMatch(i) ? 'ring-2 ring-[var(--color-warning,#f59e0b)] rounded-[var(--radius-sm)]' : ''}
-              style={q && !isMatch(i) ? { opacity: 0.35 } : undefined}
-            >
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-semibold" style={{ color: msg.role === 'user' ? 'var(--text-secondary)' : typeColor }}>
-                  {msg.role === 'user' ? 'User' : 'Assistant'}
-                </span>
-                {msg.timestamp && <span className="text-[10px] text-[var(--text-muted)]">{formatTime(msg.timestamp)}</span>}
-              </div>
-              <div
-                className={`rounded-[var(--radius-sm)] px-3 py-2 text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-[var(--border-subtle)] text-[var(--text-primary)]'
-                    : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-default)]'
-                }`}
-              >
-                {msg.role === 'assistant' ? (
-                  <div className="md-preview">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeRaw]}
-                      components={{
-                        a: ({ href, children, ...props }) => (
-                          <a href={href} onClick={handleExternalLinkClick} {...props}>{children}</a>
-                        ),
-                      }}
-                    >{msg.content}</ReactMarkdown>
+            {messages.map((msg, i) => {
+              const isUser = msg.role === 'user';
+              const matchRing = isCurrentMatch(i) ? 'ring-2 ring-[var(--color-warning,#f59e0b)] rounded-[var(--radius-sm)]' : '';
+              const dimStyle = q && !isMatch(i) ? { opacity: 0.35 } : undefined;
+
+              if (chatLayout) {
+                return (
+                  <div
+                    key={i}
+                    ref={(el) => { msgRefs.current[i] = el; }}
+                    className={`flex ${isUser ? 'justify-end' : 'justify-start'} ${matchRing}`}
+                    style={dimStyle}
+                  >
+                    <div className={`max-w-[75%] ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
+                      <div className="flex items-center gap-2 mb-1" style={{ flexDirection: isUser ? 'row-reverse' : 'row' }}>
+                        <span className="text-xs font-semibold" style={{ color: isUser ? 'var(--text-secondary)' : typeColor }}>
+                          {isUser ? 'User' : 'Assistant'}
+                        </span>
+                        {msg.timestamp && <span className="text-[10px] text-[var(--text-muted)]">{formatTime(msg.timestamp)}</span>}
+                      </div>
+                      <div
+                        className={`rounded-[var(--radius-md)] px-3 py-2 text-sm ${
+                          isUser
+                            ? 'bg-[var(--accent)] text-[var(--bg-base)]'
+                            : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-default)]'
+                        }`}
+                        style={{ borderTopRightRadius: isUser ? '2px' : undefined, borderTopLeftRadius: !isUser ? '2px' : undefined }}
+                      >
+                        {msg.role === 'assistant' ? (
+                          <div className="md-preview">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}
+                              components={{ a: ({ href, children, ...props }) => <a href={href} onClick={handleExternalLinkClick} {...props}>{children}</a> }}
+                            >{msg.content}</ReactMarkdown>
+                          </div>
+                        ) : (
+                          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {q ? <HighlightText text={msg.content} query={search.trim()} /> : msg.content}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {q ? <HighlightText text={msg.content} query={search.trim()} /> : msg.content}
+                );
+              }
+
+              // 列表布局
+              return (
+                <div
+                  key={i}
+                  ref={(el) => { msgRefs.current[i] = el; }}
+                  className={matchRing}
+                  style={dimStyle}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-semibold" style={{ color: isUser ? 'var(--text-secondary)' : typeColor }}>
+                      {isUser ? 'User' : 'Assistant'}
+                    </span>
+                    {msg.timestamp && <span className="text-[10px] text-[var(--text-muted)]">{formatTime(msg.timestamp)}</span>}
                   </div>
-                )}
+                  <div
+                    className={`rounded-[var(--radius-sm)] px-3 py-2 text-sm ${
+                      isUser
+                        ? 'bg-[var(--border-subtle)] text-[var(--text-primary)]'
+                        : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-default)]'
+                    }`}
+                  >
+                    {msg.role === 'assistant' ? (
+                      <div className="md-preview">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}
+                          components={{ a: ({ href, children, ...props }) => <a href={href} onClick={handleExternalLinkClick} {...props}>{children}</a> }}
+                        >{msg.content}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {q ? <HighlightText text={msg.content} query={search.trim()} /> : msg.content}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 右侧时间轴 */}
+          {chatLayout && userIndices.length > 1 && (
+            <div className="relative w-8 flex-shrink-0 border-l border-[var(--border-subtle)]">
+              <div className="absolute inset-0 flex flex-col justify-between py-4 px-1.5">
+                {userIndices.map((msgIdx, dotIdx) => (
+                  <div
+                    key={dotIdx}
+                    className="relative flex items-center justify-center cursor-pointer group"
+                    onMouseEnter={() => setHoveredDot(dotIdx)}
+                    onMouseLeave={() => setHoveredDot(null)}
+                    onClick={() => {
+                      setUserIdx(dotIdx);
+                      msgRefs.current[msgIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }}
+                  >
+                    <div
+                      className={`w-2.5 h-2.5 rounded-full transition-all ${
+                        userIdx === dotIdx
+                          ? 'bg-[var(--accent)] scale-125'
+                          : 'bg-[var(--text-muted)]/40 group-hover:bg-[var(--accent)]/70 group-hover:scale-110'
+                      }`}
+                    />
+                    {/* Tooltip */}
+                    {hoveredDot === dotIdx && (
+                      <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 z-10 w-56 max-h-40 overflow-auto rounded-[var(--radius-sm)] bg-[var(--bg-surface)] border border-[var(--border-strong)] shadow-[var(--shadow-overlay)] px-3 py-2 text-xs text-[var(--text-primary)] whitespace-pre-wrap break-words pointer-events-none">
+                        {messages[msgIdx].content.slice(0, 200)}{messages[msgIdx].content.length > 200 ? '...' : ''}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
+          )}
         </div>
       </div>
     </div>
