@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow, PhysicalSize } from '@tauri-apps/api/window';
 import { getVersion } from '@tauri-apps/api/app';
@@ -923,7 +924,7 @@ function FontSettings() {
     const newConfig = { ...useAppStore.getState().config, uiZoom: zoom };
     setConfig(newConfig);
     // CSS zoom 即时生效，给用户视觉反馈
-    document.body.style.zoom = `${zoom}`;
+    document.getElementById('root')!.style.zoom = `${zoom}`;
     window.dispatchEvent(new Event('zoom-changed'));
 
     // 首次拖动时记录基准窗口尺寸（100% zoom 时的物理尺寸）
@@ -1604,7 +1605,7 @@ export function SettingsModal({ open, onClose }: Props) {
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
@@ -1656,5 +1657,5 @@ export function SettingsModal({ open, onClose }: Props) {
         </div>
       </div>
     </div>
-  );
+  , document.body);
 }

@@ -48,16 +48,15 @@ export function App() {
         document.documentElement.style.fontSize = `${cfg.uiFontSize}px`;
       }
       if (cfg.uiZoom && cfg.uiZoom !== 1) {
-        document.body.style.zoom = `${cfg.uiZoom}`;
+        document.getElementById('root')!.style.zoom = `${cfg.uiZoom}`;
         window.dispatchEvent(new Event('zoom-changed'));
         // window-state 恢复的尺寸已含 zoom，缩小到基准尺寸避免双重放大
         const appWindow = getCurrentWindow();
         appWindow.innerSize().then((size) => {
           const baseW = Math.round(size.width / cfg.uiZoom!);
           const baseH = Math.round(size.height / cfg.uiZoom!);
-          invoke('debug_log', { msg: `[zoom] startup: phys=${size.width}x${size.height} zoom=${cfg.uiZoom} → ${baseW}x${baseH}` });
           return appWindow.setSize(new PhysicalSize(baseW, baseH));
-        }).catch((e) => invoke('debug_log', { msg: `[zoom] startup error: ${e}` }));
+        }).catch(() => {});
       }
       applyUiFontFamily(cfg.uiFontFamily);
       const { projectStates } = useAppStore.getState();

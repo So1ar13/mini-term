@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore } from '../store';
@@ -226,7 +227,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center select-text">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
       <div
@@ -362,5 +363,5 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
         </div>
       )}
     </div>
-  );
+  , document.body);
 }
