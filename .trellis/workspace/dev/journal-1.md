@@ -243,3 +243,69 @@ SessionEnd 事件清除 hook 状态回退 idle；process_monitor 增加 ai-idle 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: xterm 终端连体字 (ligatures) 支持
+
+**Date**: 2026-05-28
+**Task**: xterm 终端连体字 (ligatures) 支持
+**Branch**: `main`
+
+### Summary
+
+新增 @xterm/addon-ligatures 集成；AppConfig 加 terminal_ligatures 字段四层对齐 (Rust struct + serde + TS + store)；terminalCache 把 LigaturesAddon 必须先于 WebglAddon 加载这一约束硬编码 (绕过上游 #5455)，抽 4 个 addon 加载/dispose helper，新增 reloadLigaturesForPty 同步无 await 重做链路避 pty-output race；TerminalInstance useEffect 监听切换触发已开 pane 热重做；设置-字体页加开关与平台差异说明；新增 frontend spec xterm-ligatures-with-webgl-order.md 沉淀加载顺序/热切换/平台差异约束。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0b31a35` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 9: 修复 xterm.js WebGL 共享 atlas 致多 claude 终端同时乱码
+
+**Date**: 2026-05-28
+**Task**: 修复 xterm.js WebGL 共享 atlas 致多 claude 终端同时乱码
+**Branch**: `main`
+
+### Summary
+
+深入诊断 xterm.js addon-webgl CharAtlasCache 跨终端共享导致的 vertex buffer 失效 → 多 claude 并发出现同形乱码。修复在 loadWebgl 内挂 onAdd/onRemoveTextureAtlasCanvas 广播 term.refresh 唤醒 dormant render loop;归档 prd+完整证据链 research+spec(xterm-webgl-atlas-sharing.md) 供未来 upgrade addon-webgl 时回归。fix/xterm-shared-atlas-mojibake 分支 cherry-pick 到 main,与 ligatures 任务合并
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9bb05e4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
