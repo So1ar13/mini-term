@@ -3,6 +3,8 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import type { FileContentResult } from '../types';
 import { handleExternalLinkClick } from '../utils/externalLink';
 
@@ -26,6 +28,32 @@ function isHtmlFile(path: string) {
   return /\.html?$/i.test(path);
 }
 
+const EXT_LANG_MAP: Record<string, string> = {
+  '.js': 'javascript', '.jsx': 'jsx', '.ts': 'typescript', '.tsx': 'tsx',
+  '.json': 'json', '.jsonc': 'json5',
+  '.py': 'python', '.rb': 'ruby', '.rs': 'rust', '.go': 'go', '.java': 'java',
+  '.c': 'c', '.h': 'c', '.cpp': 'cpp', '.hpp': 'cpp', '.cc': 'cpp',
+  '.cs': 'csharp', '.swift': 'swift', '.kt': 'kotlin', '.kts': 'kotlin',
+  '.php': 'php', '.lua': 'lua', '.r': 'r', '.R': 'r',
+  '.sh': 'bash', '.bash': 'bash', '.zsh': 'zsh', '.fish': 'fish',
+  '.ps1': 'powershell', '.bat': 'batch', '.cmd': 'batch',
+  '.sql': 'sql', '.graphql': 'graphql', '.gql': 'graphql',
+  '.xml': 'xml', '.yaml': 'yaml', '.yml': 'yaml', '.toml': 'toml',
+  '.ini': 'ini', '.cfg': 'ini', '.conf': 'ini',
+  '.css': 'css', '.scss': 'scss', '.sass': 'sass', '.less': 'less',
+  '.dockerfile': 'dockerfile', '.docker': 'dockerfile',
+  '.makefile': 'makefile', '.mk': 'makefile',
+  '.vim': 'vim', '.vimrc': 'vim',
+  '.txt': 'text', '.log': 'text', '.csv': 'text',
+};
+
+function detectLanguage(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.')).toLowerCase();
+  if (path.endsWith('Dockerfile')) return 'dockerfile';
+  if (path.endsWith('Makefile')) return 'makefile';
+  return EXT_LANG_MAP[ext] || 'text';
+}
+
 export function FileViewerModal({ open, onClose, filePath, projectRoot, highlightLine }: FileViewerModalProps) {
   const [result, setResult] = useState<FileContentResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,7 +62,27 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
   const isImg = useMemo(() => isImageFile(filePath), [filePath]);
   const isHtml = useMemo(() => isHtmlFile(filePath), [filePath]);
   const [preview, setPreview] = useState(true);
+  const [zoom, setZoom] = useState(100);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  const handleZoom = useCallback((delta: number) => {
+    setZoom((prev) => Math.min(200, Math.max(50, prev + delta)));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        handleZoom(e.deltaY < 0 ? 10 : -10);
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [open, handleZoom]);
 
   const htmlSrcDoc = useMemo(() => {
     if (!isHtml || !result?.content) return '';
@@ -69,10 +117,13 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); handleZoom(10); }
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); handleZoom(-10); }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); setZoom(100); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, handleZoom]);
 
   useEffect(() => {
     if (result && highlightLine && highlightRef.current) {
@@ -117,6 +168,31 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
                 </button>
               </div>
             )}
+            {!isImg && result && !result.isBinary && !result.tooLarge && (
+              <div className="flex items-center gap-1 text-xs">
+                <button
+                  className="px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
+                  onClick={() => handleZoom(-10)}
+                  title="缩小 (Ctrl+-)"
+                >
+                  A-
+                </button>
+                <button
+                  className={`px-1.5 py-0.5 rounded-[var(--radius-sm)] transition-colors ${zoom === 100 ? 'text-[var(--text-muted)]' : 'text-[var(--accent)] hover:bg-[var(--border-subtle)]'}`}
+                  onClick={() => setZoom(100)}
+                  title="重置缩放"
+                >
+                  {zoom}%
+                </button>
+                <button
+                  className="px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
+                  onClick={() => handleZoom(10)}
+                  title="放大 (Ctrl++)"
+                >
+                  A+
+                </button>
+              </div>
+            )}
             <button
               className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-lg leading-none"
               onClick={onClose}
@@ -127,7 +203,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
         </div>
 
         {/* 内容区 */}
-        <div className="flex-1 overflow-auto bg-[var(--bg-base)]">
+        <div ref={contentRef} className="flex-1 overflow-auto bg-[var(--bg-base)]">
           {loading && (
             <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
               加载中...
@@ -178,7 +254,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               sandbox="allow-same-origin"
             />
           ) : !isImg && result && !result.isBinary && !result.tooLarge && isMd && preview ? (
-            <div className="md-preview p-6 max-w-[860px] mx-auto">
+            <div className="md-preview p-6 max-w-[860px] mx-auto" style={{ fontSize: `${zoom}%` }}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 rehypePlugins={[rehypeRaw]}
@@ -195,22 +271,21 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               </ReactMarkdown>
             </div>
           ) : !isImg && result && !result.isBinary && !result.tooLarge && (
-            <div className="font-mono text-sm leading-6">
-              {result.content.split('\n').map((line, i) => (
-                <div
-                  key={i}
-                  ref={i + 1 === highlightLine ? highlightRef : undefined}
-                  className={`flex hover:bg-[var(--border-subtle)] ${i + 1 === highlightLine ? 'bg-[var(--accent-muted)]' : ''}`}
-                >
-                  <span className="w-12 text-right pr-3 text-[var(--text-muted)] select-none flex-shrink-0 opacity-40">
-                    {i + 1}
-                  </span>
-                  <span className="flex-1 whitespace-pre px-2 text-[var(--text-primary)]">
-                    {line}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <SyntaxHighlighter
+              language={detectLanguage(filePath)}
+              style={oneDark}
+              showLineNumbers
+              wrapLines
+              wrapLongLines
+              lineNumberStyle={{ minWidth: '3em', paddingRight: '1em', opacity: 0.4 }}
+              customStyle={{ margin: 0, borderRadius: 0, background: 'var(--bg-base)', fontSize: `${zoom * 0.00875}rem`, lineHeight: '1.5' }}
+              lineProps={(lineNumber) => ({
+                ref: lineNumber === highlightLine ? highlightRef : undefined,
+                style: lineNumber === highlightLine ? { backgroundColor: 'var(--accent-muted)' } : undefined,
+              })}
+            >
+              {result.content}
+            </SyntaxHighlighter>
           )}
         </div>
       </div>
