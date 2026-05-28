@@ -214,11 +214,12 @@ function getRootZoom(): number {
 function getCellSize(term: Terminal): { cellWidth: number; cellHeight: number } {
   const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
   if (screen && term.cols > 0 && term.rows > 0) {
-    // CSS zoom 影响 offsetWidth/offsetHeight，需除以 zoom 得到逻辑像素
+    // getBoundingClientRect 返回缩放后的物理像素，除以 zoom 得到逻辑像素
+    const rect = screen.getBoundingClientRect();
     const zoom = getRootZoom();
     return {
-      cellWidth: screen.offsetWidth / term.cols / zoom,
-      cellHeight: screen.offsetHeight / term.rows / zoom,
+      cellWidth: rect.width / term.cols / zoom,
+      cellHeight: rect.height / term.rows / zoom,
     };
   }
   return { cellWidth: 8, cellHeight: 16 };
@@ -300,8 +301,8 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
     left: 0;
     top: ${(buffer.cursorY + 1) * cellHeight}px;
     max-height: ${Math.min(matches.length, 10) * cellHeight + 8}px;
-    min-width: ${Math.max(screen.offsetWidth / getRootZoom(), 300)}px;
-    max-width: ${screen.offsetWidth / getRootZoom()}px;
+    min-width: ${Math.max(screen.getBoundingClientRect().width / getRootZoom(), 300)}px;
+    max-width: ${screen.getBoundingClientRect().width / getRootZoom()}px;
     overflow-y: auto;
     background: var(--bg-terminal, #0a0908);
     border: 1px solid var(--border-color, #2a2824);
