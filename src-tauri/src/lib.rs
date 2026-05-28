@@ -13,6 +13,7 @@ mod shell_history;
 mod ssh;
 mod shell_integration;
 mod ssh_mcp_registry;
+mod window_theme;
 
 use tauri::{Emitter, Manager};
 
@@ -166,6 +167,7 @@ pub fn run() {
             shell_integration::unregister_context_menu,
             shell_integration::is_context_menu_registered,
             shell_integration::get_exe_path,
+            window_theme::set_window_dark_mode,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
