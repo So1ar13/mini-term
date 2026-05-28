@@ -63,12 +63,40 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
   const isHtml = useMemo(() => isHtmlFile(filePath), [filePath]);
   const [preview, setPreview] = useState(true);
   const [zoom, setZoom] = useState(100);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
   const highlightRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleZoom = useCallback((delta: number) => {
     setZoom((prev) => Math.min(200, Math.max(50, prev + delta)));
   }, []);
+
+  const enterEdit = useCallback(() => {
+    if (!result) return;
+    setEditContent(result.content);
+    setEditing(true);
+  }, [result]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setEditContent('');
+  }, []);
+
+  const saveEdit = useCallback(async () => {
+    setSaving(true);
+    try {
+      await invoke('write_file_content', { projectRoot, path: filePath, content: editContent });
+      setResult((prev) => prev ? { ...prev, content: editContent } : prev);
+      setEditing(false);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [projectRoot, filePath, editContent]);
 
   useEffect(() => {
     if (!open) return;
@@ -116,14 +144,18 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
   useEffect(() => {
     if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (editing) { cancelEdit(); return; }
+        onClose();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (editing) saveEdit(); return; }
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) { e.preventDefault(); handleZoom(10); }
       if ((e.ctrlKey || e.metaKey) && e.key === '-') { e.preventDefault(); handleZoom(-10); }
       if ((e.ctrlKey || e.metaKey) && e.key === '0') { e.preventDefault(); setZoom(100); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose, handleZoom]);
+  }, [open, onClose, handleZoom, editing, cancelEdit, saveEdit]);
 
   useEffect(() => {
     if (result && highlightLine && highlightRef.current) {
@@ -168,7 +200,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
                 </button>
               </div>
             )}
-            {!isImg && result && !result.isBinary && !result.tooLarge && (
+            {!isImg && result && !result.isBinary && !result.tooLarge && !editing && (
               <div className="flex items-center gap-1 text-xs">
                 <button
                   className="px-1.5 py-0.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
@@ -193,6 +225,32 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
                 </button>
               </div>
             )}
+            {!isImg && result && !result.isBinary && !result.tooLarge && !editing && (
+              <button
+                className="px-2 py-0.5 rounded-[var(--radius-sm)] text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
+                onClick={enterEdit}
+                title="编辑文件"
+              >
+                编辑
+              </button>
+            )}
+            {editing && (
+              <div className="flex items-center gap-1 text-xs">
+                <button
+                  className="px-2.5 py-0.5 rounded-[var(--radius-sm)] bg-[var(--accent)] text-[var(--bg-base)] hover:opacity-90 transition-opacity disabled:opacity-50"
+                  onClick={saveEdit}
+                  disabled={saving}
+                >
+                  {saving ? '保存中...' : '保存'}
+                </button>
+                <button
+                  className="px-2.5 py-0.5 rounded-[var(--radius-sm)] text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)] transition-colors"
+                  onClick={cancelEdit}
+                >
+                  取消
+                </button>
+              </div>
+            )}
             <button
               className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-lg leading-none"
               onClick={onClose}
@@ -214,7 +272,17 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               {error}
             </div>
           )}
-          {isImg && (
+          {editing && (
+            <textarea
+              ref={textareaRef}
+              className="w-full h-full p-4 bg-[var(--bg-base)] text-[var(--text-primary)] font-mono text-sm leading-6 resize-none outline-none border-0"
+              style={{ fontSize: `${zoom * 0.00875}rem` }}
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              spellCheck={false}
+            />
+          )}
+          {!editing && isImg && (
             <div className="flex items-center justify-center h-full p-6">
               <img
                 src={convertFileSrc(filePath)}
@@ -224,7 +292,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               />
             </div>
           )}
-          {!isImg && result && result.isBinary && (
+          {!editing && !isImg && result && result.isBinary && (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-[var(--text-muted)]">
               <span>二进制文件，不支持预览</span>
               <button
@@ -235,7 +303,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               </button>
             </div>
           )}
-          {!isImg && result && result.tooLarge && (
+          {!editing && !isImg && result && result.tooLarge && (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-[var(--text-muted)]">
               <span>文件过大（&gt;1MB），不支持预览</span>
               <button
@@ -246,14 +314,14 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
               </button>
             </div>
           )}
-          {!isImg && result && !result.isBinary && !result.tooLarge && isHtml && preview ? (
+          {!editing && !isImg && result && !result.isBinary && !result.tooLarge && isHtml && preview ? (
             <iframe
               srcDoc={htmlSrcDoc}
               title={fileName}
               className="w-full h-full border-0 bg-white"
               sandbox="allow-same-origin"
             />
-          ) : !isImg && result && !result.isBinary && !result.tooLarge && isMd && preview ? (
+          ) : !editing && !isImg && result && !result.isBinary && !result.tooLarge && isMd && preview ? (
             <div className="md-preview p-6 max-w-[860px] mx-auto" style={{ fontSize: `${zoom}%` }}>
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
@@ -270,7 +338,7 @@ export function FileViewerModal({ open, onClose, filePath, projectRoot, highligh
                 {result.content}
               </ReactMarkdown>
             </div>
-          ) : !isImg && result && !result.isBinary && !result.tooLarge && (
+          ) : !editing && !isImg && result && !result.isBinary && !result.tooLarge && (
             <SyntaxHighlighter
               language={detectLanguage(filePath)}
               style={oneDark}
