@@ -28,10 +28,16 @@ async function loadHistory(shellCommand: string): Promise<string[]> {
 export async function ensureHistoryLoaded(shellCommand: string): Promise<void> {
   if (historyByShell.has(shellCommand)) return;
   if (!loadPromise) {
-    loadPromise = loadHistory(shellCommand).then((lines) => {
-      historyByShell.set(shellCommand, lines);
-      loadPromise = null;
-    });
+    loadPromise = loadHistory(shellCommand)
+      .then((lines) => {
+        historyByShell.set(shellCommand, lines);
+      })
+      .catch(() => {
+        historyByShell.set(shellCommand, []);
+      })
+      .finally(() => {
+        loadPromise = null;
+      });
   }
   await loadPromise;
 }
@@ -446,7 +452,7 @@ function updateSuggestion(ptyId: number, term: Terminal): void {
 // History navigation (Up/Down arrow)
 // ---------------------------------------------------------------------------
 
-function navigateHistory(ptyId: number, term: Terminal, direction: 'up' | 'down'): boolean {
+function navigateHistorySync(ptyId: number, term: Terminal, direction: 'up' | 'down'): boolean {
   const state = getState(ptyId);
   if (!state) return false;
 
@@ -485,6 +491,19 @@ function navigateHistory(ptyId: number, term: Terminal, direction: 'up' | 'down'
   return true;
 }
 
+/** 异步版本：历史未加载时先等待加载完成再导航 */
+async function navigateHistory(ptyId: number, term: Terminal, direction: 'up' | 'down'): Promise<boolean> {
+  const state = getState(ptyId);
+  if (!state) return false;
+
+  // 历史尚未加载 → 等待加载完成后再尝试
+  if (!historyByShell.has(state.shellCommand)) {
+    await ensureHistoryLoaded(state.shellCommand);
+  }
+
+  return navigateHistorySync(ptyId, term, direction);
+}
+
 // ---------------------------------------------------------------------------
 // Input interception
 // ---------------------------------------------------------------------------
@@ -501,12 +520,20 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
 
   // Up arrow: 打开/浏览历史列表
   if (data === '\x1b[A') {
-    return navigateHistory(ptyId, term, 'up');
+    // 立即消费事件，防止箭头键被发送到 shell
+    // 异步加载历史后显示列表；无历史时回退发送箭头键给 shell
+    navigateHistory(ptyId, term, 'up').then((handled) => {
+      if (!handled) void invoke('write_pty', { ptyId, data });
+    });
+    return true;
   }
 
   // Down arrow: 浏览历史列表
   if (data === '\x1b[B') {
-    return navigateHistory(ptyId, term, 'down');
+    navigateHistory(ptyId, term, 'down').then((handled) => {
+      if (!handled) void invoke('write_pty', { ptyId, data });
+    });
+    return true;
   }
 
   // Enter: 如果列表打开则填充选中项（不执行），否则记录历史并发送回车
