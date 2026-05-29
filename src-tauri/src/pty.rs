@@ -916,18 +916,31 @@ fn write_pty_chunked(writer: &mut dyn Write, data: &str) -> Result<(), String> {
 
     let bytes = data.as_bytes();
 
-    if !cfg!(windows) || bytes.len() <= CHUNK_THRESHOLD || !data.contains('\n') {
+    if !cfg!(windows)
+        || bytes.len() <= CHUNK_THRESHOLD
+        || !bytes.iter().any(|&b| b == b'\n' || b == b'\r')
+    {
         writer.write_all(bytes).map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
         return Ok(());
     }
 
-    // 按行拆分写入，保留每行的换行符
+    // 按行拆分写入，保留每行的换行符。xterm paste 会把 \n 规范化为 \r。
     let mut start = 0;
     while start < bytes.len() {
-        let end = match bytes[start..].iter().position(|&b| b == b'\n') {
-            Some(pos) => start + pos + 1, // 包含 \n
-            None => bytes.len(),          // 最后一段无换行
+        let end = match bytes[start..]
+            .iter()
+            .position(|&b| b == b'\n' || b == b'\r')
+        {
+            Some(pos) => {
+                let delimiter = start + pos;
+                if bytes[delimiter] == b'\r' && bytes.get(delimiter + 1) == Some(&b'\n') {
+                    delimiter + 2
+                } else {
+                    delimiter + 1
+                }
+            }
+            None => bytes.len(),
         };
         writer
             .write_all(&bytes[start..end])
@@ -1061,6 +1074,40 @@ pub fn arm_ssh_autofill(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        chunks: Vec<Vec<u8>>,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.chunks.push(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn write_pty_chunked_splits_long_xterm_paste_on_carriage_returns() {
+        let data = format!(
+            "\x1b[200~{}\r{}\r{}\x1b[201~",
+            "a".repeat(80),
+            "b".repeat(80),
+            "c".repeat(80)
+        );
+        let mut writer = RecordingWriter::default();
+
+        write_pty_chunked(&mut writer, &data).unwrap();
+
+        assert!(writer.chunks.len() > 1);
+        let joined: Vec<u8> = writer.chunks.into_iter().flatten().collect();
+        assert_eq!(joined, data.as_bytes());
+    }
 
     #[test]
     fn detect_claude_command() {

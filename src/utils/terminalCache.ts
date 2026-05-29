@@ -302,6 +302,13 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
         return false;
       }
     }
+    // Claude/Codex/OpenCode users expect Ctrl+V to paste inside the TUI even
+    // when the global smart copy/paste setting is disabled for ordinary shells.
+    if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyV' && isAiPty(ptyId)) {
+      e.preventDefault();
+      void pasteToTerminal(ptyId);
+      return false;
+    }
     return true;
   });
 
@@ -590,11 +597,37 @@ function isLongText(text: string, lineThreshold: number, charThreshold: number):
 }
 
 /** 读取系统剪贴板并写入终端 PTY。
- * - 剪贴板含图片 → 保存为 temp PNG，粘贴带引号的路径（兼容含空格路径）
+ * - 剪贴板含文本 → 优先粘贴文本
  * - 文本超过配置阈值且开关开启 → 保存为 temp .txt，粘贴带引号的路径
- * - 否则直接粘贴文本
+ * - 剪贴板仅含图片 → 保存为 temp PNG，粘贴带引号的路径（兼容含空格路径）
  */
 export async function pasteToTerminal(ptyId: number): Promise<void> {
+  const text = await readText().catch(() => null);
+  if (text) {
+    const cfg = useAppStore.getState().config;
+    const enabled = cfg.longPasteToFile ?? true;
+    const lineThreshold = cfg.longPasteLineThreshold ?? 10;
+    const charThreshold = cfg.longPasteCharThreshold ?? 2000;
+
+    // 长文本：转存临时文件，粘贴路径；失败则回退到直接粘贴
+    if (enabled && isLongText(text, lineThreshold, charThreshold)) {
+      try {
+        const path: string = await invoke('save_clipboard_text', { text });
+        await enqueuePtyWrite(ptyId, `"${path}"`);
+        return;
+      } catch { /* 写文件失败，回退到直接粘贴 */ }
+    }
+
+    const cached = getCachedTerminal(ptyId);
+    if (cached) {
+      cached.term.paste(text);
+      return;
+    }
+
+    await enqueuePtyWrite(ptyId, text);
+    return;
+  }
+
   if (await clipboardHasImage()) {
     // 优先：Win32 API 读取图片保存为 temp PNG，粘贴文件路径
     // 兼容 PinPix 等 arboard 无法读取的非标准剪贴板格式
@@ -607,28 +640,4 @@ export async function pasteToTerminal(ptyId: number): Promise<void> {
     await enqueuePtyWrite(ptyId, '\x1bv');
     return;
   }
-  const text = await readText().catch(() => null);
-  if (!text) return;
-
-  const cfg = useAppStore.getState().config;
-  const enabled = cfg.longPasteToFile ?? true;
-  const lineThreshold = cfg.longPasteLineThreshold ?? 10;
-  const charThreshold = cfg.longPasteCharThreshold ?? 2000;
-
-  // 长文本：转存临时文件，粘贴路径；失败则回退到直接粘贴
-  if (enabled && isLongText(text, lineThreshold, charThreshold)) {
-    try {
-      const path: string = await invoke('save_clipboard_text', { text });
-      await enqueuePtyWrite(ptyId, `"${path}"`);
-      return;
-    } catch { /* 写文件失败，回退到直接粘贴 */ }
-  }
-
-  const cached = getCachedTerminal(ptyId);
-  if (cached) {
-    cached.term.paste(text);
-    return;
-  }
-
-  await enqueuePtyWrite(ptyId, text);
 }
