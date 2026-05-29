@@ -427,7 +427,7 @@ export function ProjectList() {
         ) : (
           <span className="truncate flex-1">{project.name}</span>
         )}
-        {showDoneTag ? <DoneTag /> : <StatusDot status={projectStatus} />}
+        {showDoneTag ? <DoneTag /> : <StatusDot status={projectStatus} size="md" hideIdle />}
         <span
           className="text-[var(--text-muted)] hover:text-[var(--color-error)] hidden group-hover:inline transition-colors text-sm"
           onClick={(e) => handleRemoveProject(e, project.id)}
