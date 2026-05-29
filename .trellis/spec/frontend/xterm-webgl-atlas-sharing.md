@@ -4,30 +4,42 @@
 
 ---
 
-## Convention:加 WebglAddon 时必须挂 atlas 变更监听,广播 refresh 到所有 cache 内 terminal
+## Convention:加 WebglAddon 时必须挂 atlas 变更监听,下一帧清理所有 WebGL texture atlas
 
 `src/utils/terminalCache.ts` 是项目里**唯一**创建 `Terminal` 与 `WebglAddon` 的入口(经 `getOrCreateTerminal` 缓存 + `activateWebgl` / `loadWebgl` 激活)。在 `new WebglAddon()` 之后、`loadAddon(webgl)` 之前,必须挂两个监听:
 
 ```ts
-function refreshAllTerminalsForAtlasChange(): void {
+let textureAtlasResetRaf: number | undefined;
+
+function scheduleTextureAtlasReset(): void {
+  if (textureAtlasResetRaf !== undefined) return;
+  textureAtlasResetRaf = requestAnimationFrame(() => {
+    textureAtlasResetRaf = undefined;
+    resetAllTerminalTextureAtlases();
+  });
+}
+
+export function resetAllTerminalTextureAtlases(): void {
   for (const e of cache.values()) {
-    if (e.term.rows > 0) e.term.refresh(0, e.term.rows - 1);
+    if (!e.webglAddon || e.term.rows <= 0) continue;
+    e.term.clearTextureAtlas();
   }
 }
 
 // 在 activateWebgl / loadWebgl 内:
 const webgl = new WebglAddon();
 webgl.onContextLoss(() => { /* ... */ });
-webgl.onAddTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);     // ← 必加
-webgl.onRemoveTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);  // ← 必加
+webgl.onChangeTextureAtlas(scheduleTextureAtlasReset);                // ← 必加
+webgl.onAddTextureAtlasCanvas(scheduleTextureAtlasReset);             // ← 必加
+webgl.onRemoveTextureAtlasCanvas(scheduleTextureAtlasReset);          // ← 必加
 entry.term.loadAddon(webgl);
 ```
 
-`term.refresh(start, end)` 仅是 dirty 标记 —— 让 xterm.js core 在下一帧 schedule `renderRows`,进而让 WebglRenderer 检查 `_glyphRenderer.beginFrame()`(即 atlas 的 `_requestClearModel`),触发完整重绘从最新 glyph 字段重写 vertex buffer。本身极轻量,对正在活跃渲染的终端无副作用(同帧 dirty 合并)。
+`term.refresh(start, end)` 仅是 dirty 标记,对 GPU texture 本身已错位/污染的场景不够。必须使用 xterm.js 官方 `term.clearTextureAtlas()` 让 WebGL renderer 清空 texture atlas、清空 glyph renderer model 并请求重绘。监听回调中不要同步清理,因为 atlas merge/add/remove 可能正处在当前 render frame 中;用 `requestAnimationFrame` 合并到下一帧执行。
 
 ### 触发场景
 
-任何 WebglAddon 实例的 `onAddTextureAtlasCanvas` / `onRemoveTextureAtlasCanvas` 都来自被它持有的 atlas;因 atlas 是共享的,**任一终端触发的事件就代表所有共享终端的 vertex buffer 可能失效**。只需任一终端把事件接到广播函数即可(无需每个都接,但多接也无害)。
+任何 WebglAddon 实例的 `onChangeTextureAtlas` / `onAddTextureAtlasCanvas` / `onRemoveTextureAtlasCanvas` 都来自被它持有的 atlas;因 atlas 是共享的,**任一终端触发的事件就代表所有共享终端的 texture/model 可能失效**。只需任一终端把事件接到广播函数即可(无需每个都接,但多接也无害)。
 
 ---
 
@@ -58,8 +70,9 @@ function loadWebgl(entry: CachedEntry): void {
     webgl.dispose();
     entry.term.refresh(0, entry.term.rows - 1);
   });
-  webgl.onAddTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);     // ← 唤醒所有 dormant 终端
-  webgl.onRemoveTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);
+  webgl.onChangeTextureAtlas(scheduleTextureAtlasReset);
+  webgl.onAddTextureAtlasCanvas(scheduleTextureAtlasReset);
+  webgl.onRemoveTextureAtlasCanvas(scheduleTextureAtlasReset);
   entry.term.loadAddon(webgl);
 }
 ```
@@ -80,7 +93,8 @@ function loadWebgl(entry: CachedEntry): void {
 - atlas page merge 时 `_mergePages` 与 `_deletePage`(`TextureAtlas.ts:207-244`)原地改 glyph 字段,但 GPU vertex buffer 是 per-renderer 的,不会自动同步。
 
 ### Fix / Prevention
-- 在 `loadWebgl` 内挂 `onAddTextureAtlasCanvas` / `onRemoveTextureAtlasCanvas` → `refreshAllTerminalsForAtlasChange`(见上文 Convention);
+- 在 `loadWebgl` 内挂 `onChangeTextureAtlas` / `onAddTextureAtlasCanvas` / `onRemoveTextureAtlasCanvas` → `scheduleTextureAtlasReset` → `resetAllTerminalTextureAtlases`(见上文 Convention);
+- 缩放、字体、可见性恢复、resize settle 后调用 `resetAllTerminalTextureAtlases`,覆盖 WebView2/GPU 层 texture atlas 已污染但未触发 atlas page 事件的路径;
 - **不要**用"给每个终端配不同 fontFamily 字符串绕过共享"作为修复 —— 内存 N 倍、首屏抖动、且 atlas 仍有上游 page merge 行为,治标不治本;
 - **不要**禁用 WebGL 退回 Canvas —— 分屏 + 高频 TUI 输出场景性能明显下降。
 

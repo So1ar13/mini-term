@@ -400,9 +400,10 @@ function disposeWebgl(entry: CachedEntry): void {
   entry.webglLoaded = false;
 }
 
+let textureAtlasResetRaf: number | undefined;
+
 /**
- * atlas page 变更后,把 cache 中所有终端的可视行打 dirty,
- * 唤醒 dormant render loop 让其消费 atlas 的 _requestClearModel 兜底。
+ * atlas 变更后,下一帧清理所有 WebGL renderer 的 texture atlas 并重绘。
  *
  * xterm.js WebGL atlas 跨实例共享(CharAtlasCache 按字体/字号/主题/DPR 命中);
  * page merge 时原地改写 glyph 的 texturePage 与 atlas 坐标,但各 Terminal 自己的
@@ -411,9 +412,22 @@ function disposeWebgl(entry: CachedEntry): void {
  * 重写 buffer。AI 终端在等待响应时 PTY 静默 → render loop dormant → 持续渲染
  * 错位字形,表现为多个 claude 终端同时出现相同乱码,resize 单个才能恢复。
  */
-function refreshAllTerminalsForAtlasChange(): void {
+function scheduleTextureAtlasReset(): void {
+  if (textureAtlasResetRaf !== undefined) return;
+  textureAtlasResetRaf = requestAnimationFrame(() => {
+    textureAtlasResetRaf = undefined;
+    resetAllTerminalTextureAtlases();
+  });
+}
+
+export function resetAllTerminalTextureAtlases(): void {
   for (const e of cache.values()) {
-    if (e.term.rows > 0) e.term.refresh(0, e.term.rows - 1);
+    if (!e.webglAddon || e.term.rows <= 0) continue;
+    try {
+      e.term.clearTextureAtlas();
+    } catch {
+      e.term.refresh(0, e.term.rows - 1);
+    }
   }
 }
 
@@ -427,8 +441,9 @@ function loadWebgl(entry: CachedEntry): void {
       entry.webglAddon = undefined;
       entry.term.refresh(0, entry.term.rows - 1);
     });
-    webgl.onAddTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);
-    webgl.onRemoveTextureAtlasCanvas(refreshAllTerminalsForAtlasChange);
+    webgl.onChangeTextureAtlas(scheduleTextureAtlasReset);
+    webgl.onAddTextureAtlasCanvas(scheduleTextureAtlasReset);
+    webgl.onRemoveTextureAtlasCanvas(scheduleTextureAtlasReset);
     entry.term.loadAddon(webgl);
     entry.webglAddon = webgl;
   } catch {

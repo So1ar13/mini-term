@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../store';
-import { getOrCreateTerminal, getCachedTerminal, activateWebgl, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput, copyTerminalSelection, pasteToTerminal, resolveTerminalFontFamily, reloadLigaturesForPty } from '../utils/terminalCache';
+import { getOrCreateTerminal, getCachedTerminal, activateWebgl, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput, copyTerminalSelection, pasteToTerminal, resolveTerminalFontFamily, reloadLigaturesForPty, resetAllTerminalTextureAtlases } from '../utils/terminalCache';
 import { getResolvedTheme } from '../utils/themeManager';
 import { showContextMenu, type MenuEntry } from '../utils/contextMenu';
 import { isFileDragging, getFileDragPath } from '../utils/fileDragState';
@@ -139,6 +139,7 @@ export function TerminalInstance({ ptyId }: Props) {
         if (container.clientWidth > 0 && container.clientHeight > 0) {
           fitAddon.fit();
           term.refresh(0, term.rows - 1);
+          resetAllTerminalTextureAtlases();
           // split/resize 后若用户原本在底部，确保视口跟随光标
           if (wasAtBottom) term.scrollToBottom();
         }
@@ -152,6 +153,7 @@ export function TerminalInstance({ ptyId }: Props) {
         if (container.clientWidth > 0 && container.clientHeight > 0) {
           fitAddon.fit();
           term.refresh(0, term.rows - 1);
+          resetAllTerminalTextureAtlases();
         }
       });
     };
@@ -162,6 +164,7 @@ export function TerminalInstance({ ptyId }: Props) {
         requestAnimationFrame(() => {
           fitAddon.fit();
           term.refresh(0, term.rows - 1);
+          resetAllTerminalTextureAtlases();
         });
       }
     });
@@ -182,6 +185,7 @@ export function TerminalInstance({ ptyId }: Props) {
     if (cached && terminalFontSize) {
       cached.term.options.fontSize = terminalFontSize;
       cached.fitAddon.fit();
+      resetAllTerminalTextureAtlases();
     }
   }, [terminalFontSize, ptyId]);
 
@@ -190,6 +194,7 @@ export function TerminalInstance({ ptyId }: Props) {
     if (!cached) return;
     cached.term.options.fontFamily = resolveTerminalFontFamily(terminalFontFamily);
     cached.fitAddon.fit();
+    resetAllTerminalTextureAtlases();
   }, [terminalFontFamily, ptyId]);
 
   // ligatures 开关切换 / 字体切换 → 重做 ligatures + WebGL atlas
