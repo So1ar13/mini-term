@@ -20,7 +20,7 @@ import type { PtyOutputPayload } from '../types';
 import { getResolvedTheme } from './themeManager';
 import { createPtyWriteQueue } from './ptyWriteQueue';
 import { getCurrentLineSnapshotFromBuffer } from './terminalSnapshot';
-import { initSuggest, disposeSuggest, handleSuggestOnData, getActiveSuggestionSuffix, clearSuggestion } from './shellSuggest';
+import { initSuggest, disposeSuggest, handleSuggestOnData, getActiveSuggestionSuffix, clearSuggestion, syncSuggestPosition } from './shellSuggest';
 
 export interface CachedTerminal {
   term: Terminal;
@@ -337,6 +337,19 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   // 终端 resize → 同步到 PTY
   const onResizeDisp = term.onResize(({ cols, rows }) => {
     invoke('resize_pty', { ptyId, cols, rows });
+    syncSuggestPosition(ptyId, term);
+  });
+
+  const onCursorMoveDisp = term.onCursorMove(() => {
+    syncSuggestPosition(ptyId, term);
+  });
+
+  const onScrollDisp = term.onScroll(() => {
+    syncSuggestPosition(ptyId, term);
+  });
+
+  const onRenderDisp = term.onRender(() => {
+    syncSuggestPosition(ptyId, term);
   });
 
   // PTY 输出由全局单一监听器分发（避免 N 个终端各自监听导致的 O(N) 事件广播开销）
@@ -345,6 +358,9 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   const cleanup = () => {
     onDataDisp.dispose();
     onResizeDisp.dispose();
+    onCursorMoveDisp.dispose();
+    onScrollDisp.dispose();
+    onRenderDisp.dispose();
     term.dispose();
   };
 

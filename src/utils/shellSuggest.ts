@@ -9,6 +9,7 @@
 import { Terminal } from '@xterm/xterm';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentLineSnapshotFromBuffer } from './terminalSnapshot';
+import { cursorCellToCssPosition } from './shellSuggestPosition';
 
 // ---------------------------------------------------------------------------
 // History management
@@ -155,6 +156,7 @@ interface SuggestState {
   activeSuggestion: string | null;
   currentInput: string;
   ghostEl: HTMLSpanElement | null;
+  ghostAnsiCells: number;
   listEl: HTMLDivElement | null;
   historyIndex: number;
   historyMatches: string[];
@@ -174,6 +176,7 @@ export function initSuggest(ptyId: number, shellCommand: string): void {
     activeSuggestion: null,
     currentInput: '',
     ghostEl: null,
+    ghostAnsiCells: 0,
     listEl: null,
     historyIndex: -1,
     historyMatches: [],
@@ -195,7 +198,14 @@ export function disposeSuggest(ptyId: number): void {
 // DOM helpers
 // ---------------------------------------------------------------------------
 
-function removeGhostEl(state: SuggestState): void {
+function eraseAnsiGhost(term: Terminal, state: SuggestState): void {
+  if (state.ghostAnsiCells <= 0) return;
+  term.write('\x1b[0K');
+  state.ghostAnsiCells = 0;
+}
+
+function removeGhostEl(state: SuggestState, term?: Terminal): void {
+  if (term) eraseAnsiGhost(term, state);
   state.ghostEl?.remove();
   state.ghostEl = null;
 }
@@ -212,9 +222,30 @@ function getRootZoom(): number {
 }
 
 function getCellSize(term: Terminal): { cellWidth: number; cellHeight: number } {
+  const renderCell = (term as unknown as {
+    _core?: {
+      _renderService?: {
+        dimensions?: {
+          css?: {
+            cell?: {
+              width?: number;
+              height?: number;
+            };
+          };
+        };
+      };
+    };
+  })._core?._renderService?.dimensions?.css?.cell;
+
+  if (renderCell?.width && renderCell.height) {
+    return {
+      cellWidth: renderCell.width,
+      cellHeight: renderCell.height,
+    };
+  }
+
   const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
   if (screen && term.cols > 0 && term.rows > 0) {
-    // getBoundingClientRect 返回缩放后的物理像素，除以 zoom 得到逻辑像素
     const rect = screen.getBoundingClientRect();
     const zoom = getRootZoom();
     return {
@@ -225,50 +256,79 @@ function getCellSize(term: Terminal): { cellWidth: number; cellHeight: number } 
   return { cellWidth: 8, cellHeight: 16 };
 }
 
+function stringCellWidth(text: string): number {
+  let cells = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    cells += code >= 0x1100 ? 2 : 1;
+  }
+  return cells;
+}
+
+function getCursorPosition(term: Terminal): { left: number; top: number; cellHeight: number; screenWidth: number } | null {
+  const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
+  if (!screen) return null;
+
+  const cellSize = getCellSize(term);
+  const zoom = getRootZoom();
+  const buffer = term.buffer.active;
+  const { left, top } = cursorCellToCssPosition(
+    {
+      cursorX: buffer.cursorX,
+      cursorY: buffer.cursorY,
+      baseY: buffer.baseY,
+      viewportY: buffer.viewportY,
+    },
+    cellSize,
+    zoom,
+  );
+  const screenRect = screen.getBoundingClientRect();
+  return {
+    left,
+    top,
+    cellHeight: cellSize.cellHeight,
+    screenWidth: screen.clientWidth || screenRect.width / zoom,
+  };
+}
+
+export function syncSuggestPosition(ptyId: number, term: Terminal): void {
+  const state = getState(ptyId);
+  if (!state) return;
+
+  const pos = getCursorPosition(term);
+  if (!pos) return;
+
+  if (state.ghostEl) {
+    state.ghostEl.style.left = `${pos.left}px`;
+    state.ghostEl.style.top = `${pos.top}px`;
+    state.ghostEl.style.height = `${pos.cellHeight}px`;
+    state.ghostEl.style.lineHeight = `${pos.cellHeight}px`;
+  }
+
+  if (state.listEl) {
+    state.listEl.style.top = `${pos.top + pos.cellHeight}px`;
+    state.listEl.style.minWidth = `${Math.max(pos.screenWidth, 300)}px`;
+    state.listEl.style.maxWidth = `${pos.screenWidth}px`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Ghost text (inline single suggestion)
 // ---------------------------------------------------------------------------
 
 function showGhostText(term: Terminal, state: SuggestState, suggestion: string): void {
-  removeGhostEl(state);
+  removeGhostEl(state, term);
 
   const suffix = suggestion.slice(state.currentInput.length);
   if (!suffix) return;
+  const printableSuffix = suffix.replace(/[\x00-\x1f\x7f]/g, '');
+  if (!printableSuffix) return;
 
-  const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
-  if (!screen) return;
+  const cells = stringCellWidth(printableSuffix);
+  if (cells <= 0) return;
 
-  const { cellHeight } = getCellSize(term);
-
-  // 用 xterm 的 helper-textarea 定位，它由 xterm 精确放在光标位置
-  const helper = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement | null;
-  if (!helper) return;
-  const helperRect = helper.getBoundingClientRect();
-  const screenRect = screen.getBoundingClientRect();
-  const zoom = getRootZoom();
-
-  // helperRect 是 viewport 坐标，转为 screen 的 CSS 像素坐标
-  const ghostLeft = (helperRect.left - screenRect.left) / zoom;
-  const ghostTop = (helperRect.top - screenRect.top) / zoom;
-
-  const ghost = document.createElement('span');
-  ghost.textContent = suffix;
-  ghost.style.cssText = `
-    position: absolute;
-    left: ${ghostLeft}px;
-    top: ${ghostTop}px;
-    height: ${cellHeight}px;
-    line-height: ${cellHeight}px;
-    color: rgba(255, 255, 255, 0.3);
-    pointer-events: none;
-    white-space: pre;
-    z-index: 5;
-    font-family: ${term.options.fontFamily || 'monospace'};
-    font-size: ${term.options.fontSize || 14}px;
-  `;
-
-  screen.appendChild(ghost);
-  state.ghostEl = ghost;
+  term.write(`\x1b[2m${printableSuffix}\x1b[22m\x1b[${cells}D`);
+  state.ghostAnsiCells = cells;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +345,7 @@ function deleteMatchFromList(ptyId: number, term: Terminal, state: SuggestState,
   }
   if (state.historyMatches.length === 0) {
     removeListEl(state);
-    removeGhostEl(state);
+    removeGhostEl(state, term);
     state.activeSuggestion = null;
   } else {
     showHistoryList(ptyId, term, state, state.historyMatches);
@@ -294,32 +354,25 @@ function deleteMatchFromList(ptyId: number, term: Terminal, state: SuggestState,
 
 function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, matches: string[]): void {
   removeListEl(state);
-  removeGhostEl(state);
+  removeGhostEl(state, term);
 
   if (matches.length === 0) return;
 
   const screen = term.element?.querySelector('.xterm-screen') as HTMLElement | null;
   if (!screen) return;
 
-  const { cellHeight } = getCellSize(term);
-  const zoom = getRootZoom();
-  const screenRect = screen.getBoundingClientRect();
-
-  // 用 helper-textarea 获取光标行的 Y 位置
-  const helper = term.element?.querySelector('.xterm-helper-textarea') as HTMLElement | null;
-  const helperTop = helper
-    ? (helper.getBoundingClientRect().top - screenRect.top) / zoom
-    : term.buffer.active.cursorY * cellHeight;
+  const pos = getCursorPosition(term);
+  if (!pos) return;
 
   // 列表面板定位在光标行下方
   const panel = document.createElement('div');
   panel.style.cssText = `
     position: absolute;
     left: 0;
-    top: ${helperTop + cellHeight}px;
-    max-height: ${Math.min(matches.length, 10) * cellHeight + 8}px;
-    min-width: ${Math.max(screenRect.width / zoom, 300)}px;
-    max-width: ${screenRect.width / zoom}px;
+    top: ${pos.top + pos.cellHeight}px;
+    max-height: ${Math.min(matches.length, 10) * pos.cellHeight + 8}px;
+    min-width: ${Math.max(pos.screenWidth, 300)}px;
+    max-width: ${pos.screenWidth}px;
     overflow-y: auto;
     background: var(--bg-terminal, #0a0908);
     border: 1px solid var(--border-color, #2a2824);
@@ -342,7 +395,7 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
       overflow: hidden;
       text-overflow: ellipsis;
       color: var(--text-secondary, #a09890);
-      line-height: ${cellHeight}px;
+      line-height: ${pos.cellHeight}px;
       position: relative;
     `;
     item.textContent = matches[i];
@@ -358,7 +411,7 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
       const selected = matches[i];
       const suffix = selected.slice(state.currentInput.length);
       removeListEl(state);
-      removeGhostEl(state);
+      removeGhostEl(state, term);
       state.activeSuggestion = null;
       state.currentInput = selected;
       state.historyIndex = -1;
@@ -377,7 +430,7 @@ function showHistoryList(ptyId: number, term: Terminal, state: SuggestState, mat
       opacity: 0;
       cursor: pointer;
       color: var(--text-secondary, #a09890);
-      font-size: ${Math.round(cellHeight * 0.7)}px;
+      font-size: ${Math.round(pos.cellHeight * 0.7)}px;
       line-height: 1;
       padding: 0 2px;
     `;
@@ -451,7 +504,7 @@ function updateSuggestion(ptyId: number, term: Terminal): void {
     state.activeSuggestion = null;
     state.historyIndex = -1;
     state.historyMatches = [];
-    removeGhostEl(state);
+    removeGhostEl(state, term);
     removeListEl(state);
     state.currentInput = '';
     return;
@@ -473,7 +526,7 @@ function updateSuggestion(ptyId: number, term: Terminal): void {
   if (match) {
     showGhostText(term, state, match);
   } else {
-    removeGhostEl(state);
+    removeGhostEl(state, term);
   }
 }
 
@@ -512,7 +565,7 @@ function navigateHistorySync(ptyId: number, term: Terminal, direction: 'up' | 'd
 
   // 更新 ghost text 为当前选中项
   state.activeSuggestion = matches[state.listSelectedIndex];
-  removeGhostEl(state);
+  removeGhostEl(state, term);
   if (state.activeSuggestion) {
     showGhostText(term, state, state.activeSuggestion);
   }
@@ -544,6 +597,7 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
   // Right arrow: 接受建议（关闭列表）
   if (data === '\x1b[C' && state.activeSuggestion) {
     removeListEl(state);
+    eraseAnsiGhost(term, state);
     return false; // 让调用者发送后缀到 PTY
   }
 
@@ -570,7 +624,7 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
     if (state.listEl) {
       const selected = state.historyMatches[state.listSelectedIndex];
       removeListEl(state);
-      removeGhostEl(state);
+      removeGhostEl(state, term);
       if (selected) {
         // 只填充后缀到终端，不发送 \r（不执行）
         const suffix = selected.slice(state.currentInput.length);
@@ -591,7 +645,7 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
     state.activeSuggestion = null;
     state.historyIndex = -1;
     state.historyMatches = [];
-    removeGhostEl(state);
+    removeGhostEl(state, term);
     return false;
   }
 
@@ -599,14 +653,14 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
   if (data === '\x1b') {
     if (state.listEl) {
       removeListEl(state);
-      removeGhostEl(state);
+      removeGhostEl(state, term);
       state.activeSuggestion = null;
       return true; // 消费 Esc，不发送到 PTY
     }
     state.activeSuggestion = null;
     state.historyIndex = -1;
     state.historyMatches = [];
-    removeGhostEl(state);
+    removeGhostEl(state, term);
     return false;
   }
 
@@ -616,7 +670,7 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
     state.activeSuggestion = null;
     state.historyIndex = -1;
     state.historyMatches = [];
-    removeGhostEl(state);
+    removeGhostEl(state, term);
     return false;
   }
 
@@ -628,6 +682,7 @@ export function handleSuggestOnData(ptyId: number, term: Terminal, data: string)
   }
 
   // 其他按键：延迟更新建议，等 PTY 回显处理完毕后再读 buffer
+  removeGhostEl(state, term);
   setTimeout(() => updateSuggestion(ptyId, term), 30);
   return false;
 }
