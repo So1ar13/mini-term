@@ -598,14 +598,15 @@ function isLongText(text: string, lineThreshold: number, charThreshold: number):
 
 /** 读取系统剪贴板并写入终端 PTY。
  * - 剪贴板含文本 → 优先粘贴文本
- * - 文本超过配置阈值且开关开启 → 保存为 temp .txt，粘贴带引号的路径
+ * - 普通 shell 文本超过配置阈值且开关开启 → 保存为 temp .txt，粘贴带引号的路径
+ * - AI TUI 文本 → 始终直接粘贴文本，让工具收到 bracketed paste
  * - 剪贴板仅含图片 → 保存为 temp PNG，粘贴带引号的路径（兼容含空格路径）
  */
 export async function pasteToTerminal(ptyId: number): Promise<void> {
   const text = await readText().catch(() => null);
   if (text) {
     const cfg = useAppStore.getState().config;
-    const enabled = cfg.longPasteToFile ?? true;
+    const enabled = !isAiPty(ptyId) && (cfg.longPasteToFile ?? true);
     const lineThreshold = cfg.longPasteLineThreshold ?? 10;
     const charThreshold = cfg.longPasteCharThreshold ?? 2000;
 
