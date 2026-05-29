@@ -117,6 +117,18 @@ html, body, #root {
   background-color: var(--bg-terminal) !important;
 }
 
+/*
+ * Windows IME anchors the candidate window to xterm's hidden textarea.
+ * xterm expands that textarea to the composition text width, which makes the
+ * candidate window drift while typing pinyin in TUI apps like Claude Code.
+ * Keep xterm's left/top positioning, but make the anchor itself stable.
+ */
+.xterm .xterm-helper-textarea {
+  width: 1px !important;
+  min-width: 1px !important;
+  max-width: 1px !important;
+}
+
 /* ===== 文件拖拽到终端：拖拽期间禁用终端区 pointer-events，让鼠标事件穿透到 drop-zone ===== */
 body.file-dragging [data-terminal-drop] > * {
   pointer-events: none !important;
