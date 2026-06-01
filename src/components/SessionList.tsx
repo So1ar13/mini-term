@@ -3,10 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAppStore, genId, saveLayoutToConfig } from '../store';
 import { showContextMenu } from '../utils/contextMenu';
 import { showConfirm, showPrompt } from '../utils/prompt';
-import { registerShellCommand, writePtyInput } from '../utils/terminalCache';
+import { registerShellCommand, writePtyInput, isAiPty } from '../utils/terminalCache';
 import { getProjectEnvs } from '../utils/projectEnv';
 import { SessionViewerModal } from './SessionViewerModal';
-import type { AiSession, SplitNode, TerminalTab } from '../types';
+import type { AiSession, SplitNode, PaneState } from '../types';
 
 const PAGE_SIZE = 20;
 
@@ -46,25 +46,56 @@ function sessionNicknameKey(session: AiSession): string {
   return `${session.sessionType}:${session.id}`;
 }
 
-/** 从 SplitNode 树中找到 activePaneId 对应的 ptyId */
-function findActivePtyId(node: SplitNode): number | undefined {
+/** 从 SplitNode 树中找到 activePaneId 对应的 pane */
+function findActivePane(node: SplitNode): { pane: { id: string; shellName: string; customTitle?: string; ptyId?: number }; path: number[] } | undefined {
   if (node.type === 'leaf') {
     const pane = node.panes.find((p) => p.id === node.activePaneId);
-    return pane?.ptyId;
+    return pane ? { pane, path: [] } : undefined;
   }
-  // 递归查找，优先返回第一个找到的
-  for (const child of node.children) {
-    const ptyId = findActivePtyId(child);
-    if (ptyId !== undefined) return ptyId;
+  for (let i = 0; i < node.children.length; i++) {
+    const result = findActivePane(node.children[i]);
+    if (result) return { ...result, path: [i, ...result.path] };
   }
   return undefined;
+}
+
+/** 递归找到包含 targetPaneId 的 leaf，将 newPane 添加到其 panes 数组并设为 activePaneId */
+function addPaneToActiveLeaf(node: SplitNode, targetPaneId: string, newPane: PaneState): SplitNode {
+  if (node.type === 'leaf') {
+    if (node.panes.some((p) => p.id === targetPaneId)) {
+      return {
+        ...node,
+        panes: [...node.panes, newPane],
+        activePaneId: newPane.id,
+      };
+    }
+    return node;
+  }
+  return {
+    ...node,
+    children: node.children.map((c) => addPaneToActiveLeaf(c, targetPaneId, newPane)),
+  };
+}
+
+/** 递归更新 SplitNode 中指定 pane 的 customTitle */
+function renamePaneInTree(node: SplitNode, paneId: string, customTitle: string | undefined): SplitNode {
+  if (node.type === 'leaf') {
+    return {
+      ...node,
+      panes: node.panes.map((p) => p.id === paneId ? { ...p, customTitle } : p),
+    };
+  }
+  return {
+    ...node,
+    children: node.children.map((c) => renamePaneInTree(c, paneId, customTitle)),
+  };
 }
 
 export function SessionList() {
   const config = useAppStore((s) => s.config);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const projectStates = useAppStore((s) => s.projectStates);
-  const addTab = useAppStore((s) => s.addTab);
+  const updateTabLayout = useAppStore((s) => s.updateTabLayout);
   const updateConfig = useAppStore((s) => s.setConfig);
 
   const [allSessions, setAllSessions] = useState<AiSession[]>([]);
@@ -161,13 +192,24 @@ export function SessionList() {
                 const nicknameKey = sessionNicknameKey(session);
                 const currentNickname = config.sessionNicknames?.[nicknameKey] || '';
 
+                const sessionName = currentNickname || session.title;
+
                 const writeCmdToTerminal = async (command: string) => {
                   if (!activeProjectId) return;
                   const ps = projectStates.get(activeProjectId);
                   const activeTab = ps?.tabs.find((t) => t.id === ps.activeTabId);
-                  const ptyId = activeTab ? findActivePtyId(activeTab.splitLayout) : undefined;
-                  if (ptyId !== undefined) {
+                  const activeResult = activeTab ? findActivePane(activeTab.splitLayout) : undefined;
+                  const ptyId = activeResult?.pane.ptyId;
+
+                  if (ptyId !== undefined && !isAiPty(ptyId)) {
                     await writePtyInput(ptyId, command);
+                    // 已有终端：询问是否同步重命名
+                    const ok = await showConfirm('同步重命名终端', `是否将终端名称同步为「${sessionName}」？`);
+                    if (ok && activeTab && activeResult) {
+                      const newLayout = renamePaneInTree(activeTab.splitLayout, activeResult.pane.id, sessionName);
+                      updateTabLayout(activeProjectId, activeTab.id, newLayout);
+                      saveLayoutToConfig(activeProjectId);
+                    }
                   } else if (activeProject) {
                     const shell = config.availableShells.find((s) => s.name === config.defaultShell)
                       ?? config.availableShells[0];
@@ -179,20 +221,26 @@ export function SessionList() {
                       envs: getProjectEnvs(activeProjectId),
                     });
                     registerShellCommand(newPtyId, shell.command);
-                    const paneId = genId();
-                    const tabId = genId();
-                    const tab: TerminalTab = {
-                      id: tabId,
-                      status: 'idle',
-                      splitLayout: {
-                        type: 'leaf',
-                        panes: [{ id: paneId, shellName: shell.name, status: 'idle', ptyId: newPtyId }],
-                        activePaneId: paneId,
-                      },
-                    };
-                    addTab(activeProjectId, tab);
-                    saveLayoutToConfig(activeProjectId);
-                    await writePtyInput(newPtyId, command);
+                    // 在当前 leaf 的 tab 栏新增一个 pane
+                    const ps = projectStates.get(activeProjectId);
+                    const currentTab = ps?.tabs.find((t) => t.id === ps.activeTabId);
+                    if (currentTab) {
+                      const activePaneResult = findActivePane(currentTab.splitLayout);
+                      const targetPaneId = activePaneResult?.pane.id;
+                      if (targetPaneId) {
+                        const newPane: PaneState = {
+                          id: genId(),
+                          shellName: shell.name,
+                          customTitle: sessionName,
+                          status: 'idle',
+                          ptyId: newPtyId,
+                        };
+                        const newLayout = addPaneToActiveLeaf(currentTab.splitLayout, targetPaneId, newPane);
+                        updateTabLayout(activeProjectId, currentTab.id, newLayout);
+                        saveLayoutToConfig(activeProjectId);
+                        await writePtyInput(newPtyId, command);
+                      }
+                    }
                   }
                 };
 
