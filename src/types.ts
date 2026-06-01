@@ -161,6 +161,8 @@ export interface AiSession {
   sessionType: 'claude' | 'codex';
   title: string;
   timestamp: string; // ISO 8601
+  lastActive: string; // 最后活跃时间 ISO 8601
+  size: number; // 文件大小（字节）
 }
 
 export interface AiSessionMessage {

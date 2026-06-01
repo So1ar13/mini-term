@@ -37,6 +37,13 @@ function formatTime(iso: string): string {
   return y === currentYear ? `${m}月${d}日` : `${y}/${m}/${d}`;
 }
 
+/** 格式化文件大小 */
+function formatSize(bytes: number): string {
+  if (bytes <= 0) return '';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}M`;
+}
+
 const TYPE_BADGE: Record<string, { label: string; color: string }> = {
   claude: { label: 'C', color: 'var(--color-ai)' },
   codex: { label: 'X', color: 'var(--color-success)' },
@@ -312,8 +319,16 @@ export function SessionList() {
                 <div className="truncate text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors leading-snug">
                   {config.sessionNicknames?.[sessionNicknameKey(session)] || session.title}
                 </div>
+                {session.lastActive && (
+                  <div className="text-[var(--text-muted)] text-[10px] mt-0.5 leading-none">
+                    最近: {formatTime(session.lastActive)}
+                  </div>
+                )}
                 <div className="text-[var(--text-muted)] text-[10px] mt-0.5 leading-none">
-                  {formatTime(session.timestamp)}
+                  创建: {formatTime(session.timestamp)}
+                  {session.size > 0 && (
+                    <span> · {formatSize(session.size)}</span>
+                  )}
                 </div>
               </div>
             </div>

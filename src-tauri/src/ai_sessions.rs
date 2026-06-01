@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const MAX_CLAUDE_SESSION_FILES_TO_SCAN: usize = 300;
 const MAX_CODEX_SESSION_FILES_TO_SCAN: usize = 500;
@@ -31,6 +31,49 @@ pub struct AiSession {
     pub session_type: String, // "claude" | "codex"
     pub title: String,
     pub timestamp: String, // ISO 8601
+    pub last_active: String, // 最后修改时间 ISO 8601
+    pub size: u64,           // 文件大小（字节）
+}
+
+/// 将 SystemTime 转换为 ISO 8601 字符串（UTC）
+fn system_time_to_iso(time: SystemTime) -> String {
+    let duration = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = duration.as_secs() as i64;
+    // 简易 UTC 日期计算（不依赖 chrono）
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let h = time_of_day / 3600;
+    let m = (time_of_day % 3600) / 60;
+    let s = time_of_day % 60;
+    // 从 1970-01-01 推算年月日
+    let (y, mo, d) = days_to_ymd(days);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, mo, d, h, m, s)
+}
+
+fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
+    let mut y = 1970i64;
+    loop {
+        let days_in_year = if is_leap(y) { 366 } else { 365 };
+        if days < days_in_year { break; }
+        days -= days_in_year;
+        y += 1;
+    }
+    let leap = is_leap(y);
+    let month_days: [u32; 12] = [
+        31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+    let mut mo = 0u32;
+    while mo < 12 && days >= month_days[mo as usize] as i64 {
+        days -= month_days[mo as usize] as i64;
+        mo += 1;
+    }
+    (y, mo + 1, days as u32 + 1)
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 /// 获取用户 home 目录
@@ -140,12 +183,20 @@ fn get_claude_sessions(project_path: &str) -> Vec<AiSession> {
             .to_string();
 
         let (title, timestamp) = read_claude_session_info(&path);
+        let meta = fs::metadata(&path).ok();
+        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+        let last_active = meta
+            .and_then(|m| m.modified().ok())
+            .map(system_time_to_iso)
+            .unwrap_or_default();
 
         sessions.push(AiSession {
             id,
             session_type: "claude".to_string(),
             title,
             timestamp,
+            last_active,
+            size,
         });
     }
 
@@ -411,12 +462,20 @@ fn try_read_codex_session(
     }
 
     let timestamp = matched_timestamp;
+    let meta = fs::metadata(path).ok();
+    let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let last_active = meta
+        .and_then(|m| m.modified().ok())
+        .map(system_time_to_iso)
+        .unwrap_or_default();
 
     Some(AiSession {
         id,
         session_type: "codex".to_string(),
         title,
         timestamp,
+        last_active,
+        size,
     })
 }
 
