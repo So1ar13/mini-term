@@ -1,5 +1,6 @@
 use mt_core::SshConnection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
@@ -108,6 +109,9 @@ pub struct AppConfig {
     pub ssh_connections: Vec<SshConnection>,
     #[serde(default = "default_ui_zoom")]
     pub ui_zoom: f64,
+    /// 会话别名映射，key 为 `{session_type}:{session_id}`，value 为自定义名称
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub session_nicknames: HashMap<String, String>,
 }
 
 fn default_ui_zoom() -> f64 {
@@ -275,6 +279,7 @@ impl Default for AppConfig {
             smart_copy_paste: false,
             ssh_connections: vec![],
             ui_zoom: default_ui_zoom(),
+            session_nicknames: HashMap::new(),
         }
     }
 }

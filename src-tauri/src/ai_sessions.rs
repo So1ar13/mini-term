@@ -648,6 +648,49 @@ pub fn get_ai_sessions(project_path: String) -> Result<Vec<AiSession>, String> {
     Ok(sessions)
 }
 
+// ─── Delete Session ───────────────────────────────────────────
+
+#[tauri::command]
+pub fn delete_ai_session(
+    session_type: String,
+    session_id: String,
+    project_path: String,
+) -> Result<(), String> {
+    match session_type.as_str() {
+        "claude" => {
+            let project_dirs = find_claude_project_dirs(&project_path);
+            let filename = format!("{}.jsonl", session_id);
+            for dir in &project_dirs {
+                let path = dir.join(&filename);
+                if path.exists() {
+                    fs::remove_file(&path)
+                        .map_err(|e| format!("无法删除会话文件: {}", e))?;
+                    return Ok(());
+                }
+            }
+            Err("未找到 Claude 会话文件".to_string())
+        }
+        "codex" => {
+            let home = home_dir().ok_or_else(|| "无法获取 home 目录".to_string())?;
+            let sessions_dir = home.join(".codex").join("sessions");
+            if !sessions_dir.exists() {
+                return Err("Codex sessions 目录不存在".to_string());
+            }
+            let mut paths = Vec::new();
+            collect_codex_session_paths(&sessions_dir, &mut paths);
+            let session_file = paths
+                .iter()
+                .find(|p| is_codex_session_match(p, &session_id))
+                .ok_or_else(|| "未找到 Codex 会话文件".to_string())?
+                .clone();
+            fs::remove_file(&session_file)
+                .map_err(|e| format!("无法删除会话文件: {}", e))?;
+            Ok(())
+        }
+        _ => Err(format!("不支持的会话类型: {}", session_type)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppStore } from '../store';
+import { useAppStore, genId, saveLayoutToConfig } from '../store';
 import { showContextMenu } from '../utils/contextMenu';
+import { showConfirm, showPrompt } from '../utils/prompt';
+import { registerShellCommand, writePtyInput } from '../utils/terminalCache';
+import { getProjectEnvs } from '../utils/projectEnv';
 import { SessionViewerModal } from './SessionViewerModal';
-import type { AiSession } from '../types';
+import type { AiSession, SplitNode, TerminalTab } from '../types';
 
 const PAGE_SIZE = 20;
 
@@ -39,9 +42,30 @@ const TYPE_BADGE: Record<string, { label: string; color: string }> = {
   codex: { label: 'X', color: 'var(--color-success)' },
 };
 
+function sessionNicknameKey(session: AiSession): string {
+  return `${session.sessionType}:${session.id}`;
+}
+
+/** 从 SplitNode 树中找到 activePaneId 对应的 ptyId */
+function findActivePtyId(node: SplitNode): number | undefined {
+  if (node.type === 'leaf') {
+    const pane = node.panes.find((p) => p.id === node.activePaneId);
+    return pane?.ptyId;
+  }
+  // 递归查找，优先返回第一个找到的
+  for (const child of node.children) {
+    const ptyId = findActivePtyId(child);
+    if (ptyId !== undefined) return ptyId;
+  }
+  return undefined;
+}
+
 export function SessionList() {
   const config = useAppStore((s) => s.config);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const projectStates = useAppStore((s) => s.projectStates);
+  const addTab = useAppStore((s) => s.addTab);
+  const updateConfig = useAppStore((s) => s.setConfig);
 
   const [allSessions, setAllSessions] = useState<AiSession[]>([]);
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
@@ -124,13 +148,54 @@ export function SessionList() {
             <div
               key={`${session.sessionType}-${session.id}`}
               className="flex items-start gap-2 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-xs group hover:bg-[var(--border-subtle)] transition-colors cursor-default"
-              title={session.title}
+              title={config.sessionNicknames?.[sessionNicknameKey(session)] || session.title}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 const cmd = session.sessionType === 'claude'
                   ? `claude --resume ${session.id}`
                   : `codex resume ${session.id}`;
+                const resumeWithPerms = session.sessionType === 'claude'
+                  ? `claude --resume ${session.id} --permission-mode bypassPermissions`
+                  : `codex resume ${session.id}`;
+                const nicknameKey = sessionNicknameKey(session);
+                const currentNickname = config.sessionNicknames?.[nicknameKey] || '';
+
+                const writeCmdToTerminal = async (command: string) => {
+                  if (!activeProjectId) return;
+                  const ps = projectStates.get(activeProjectId);
+                  const activeTab = ps?.tabs.find((t) => t.id === ps.activeTabId);
+                  const ptyId = activeTab ? findActivePtyId(activeTab.splitLayout) : undefined;
+                  if (ptyId !== undefined) {
+                    await writePtyInput(ptyId, command);
+                  } else if (activeProject) {
+                    const shell = config.availableShells.find((s) => s.name === config.defaultShell)
+                      ?? config.availableShells[0];
+                    if (!shell) return;
+                    const newPtyId = await invoke<number>('create_pty', {
+                      shell: shell.command,
+                      args: shell.args ?? [],
+                      cwd: activeProject.path,
+                      envs: getProjectEnvs(activeProjectId),
+                    });
+                    registerShellCommand(newPtyId, shell.command);
+                    const paneId = genId();
+                    const tabId = genId();
+                    const tab: TerminalTab = {
+                      id: tabId,
+                      status: 'idle',
+                      splitLayout: {
+                        type: 'leaf',
+                        panes: [{ id: paneId, shellName: shell.name, status: 'idle', ptyId: newPtyId }],
+                        activePaneId: paneId,
+                      },
+                    };
+                    addTab(activeProjectId, tab);
+                    saveLayoutToConfig(activeProjectId);
+                    await writePtyInput(newPtyId, command);
+                  }
+                };
+
                 showContextMenu(e.clientX, e.clientY, [
                   {
                     label: '查看',
@@ -138,8 +203,50 @@ export function SessionList() {
                   },
                   { separator: true },
                   {
-                    label: '复制恢复命令',
-                    onClick: () => navigator.clipboard.writeText(cmd),
+                    label: '恢复',
+                    onClick: () => writeCmdToTerminal(cmd),
+                  },
+                  { separator: true },
+                  {
+                    label: '恢复（授予权限）',
+                    onClick: () => writeCmdToTerminal(resumeWithPerms),
+                  },
+                  { separator: true },
+                  {
+                    label: '重命名',
+                    onClick: async () => {
+                      const name = await showPrompt('重命名会话', '输入新名称', currentNickname || session.title);
+                      if (name === null) return;
+                      const trimmed = name.trim();
+                      const newNicknames = { ...(config.sessionNicknames ?? {}) };
+                      if (trimmed && trimmed !== session.title) {
+                        newNicknames[nicknameKey] = trimmed;
+                      } else {
+                        delete newNicknames[nicknameKey];
+                      }
+                      const newConfig = { ...config, sessionNicknames: newNicknames };
+                      updateConfig(newConfig);
+                      invoke('save_config', { config: newConfig }).catch(() => {});
+                    },
+                  },
+                  { separator: true },
+                  {
+                    label: '删除',
+                    danger: true,
+                    onClick: async () => {
+                      const ok = await showConfirm('删除会话', `确定删除此会话？此操作不可撤销。`);
+                      if (!ok) return;
+                      try {
+                        await invoke('delete_ai_session', {
+                          sessionType: session.sessionType,
+                          sessionId: session.id,
+                          projectPath: activeProject?.path ?? '',
+                        });
+                        if (activeProject?.path) fetchSessions(activeProject.path);
+                      } catch (e) {
+                        console.error('删除会话失败:', e);
+                      }
+                    },
                   },
                 ]);
               }}
@@ -155,7 +262,7 @@ export function SessionList() {
               {/* 标题 + 时间 */}
               <div className="flex-1 min-w-0">
                 <div className="truncate text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] transition-colors leading-snug">
-                  {session.title}
+                  {config.sessionNicknames?.[sessionNicknameKey(session)] || session.title}
                 </div>
                 <div className="text-[var(--text-muted)] text-[10px] mt-0.5 leading-none">
                   {formatTime(session.timestamp)}

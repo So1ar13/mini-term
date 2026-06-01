@@ -134,6 +134,7 @@ pub fn run() {
             fs::filter_directories,
             ai_sessions::get_ai_sessions,
             ai_sessions::get_ai_session_content,
+            ai_sessions::delete_ai_session,
             git::get_git_status,
             git::get_git_diff,
             git::discover_git_repos,
