@@ -284,8 +284,13 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
       void pasteToTerminal(ptyId);
       return false;
     }
-    // 智能 Ctrl+C/V（设置开启时）：Ctrl+C 有选区则复制并清除选区、
-    // 无选区则透传 SIGINT；Ctrl+V 直接粘贴
+    // Ctrl+V：始终粘贴（无论 smartCopyPaste 设置）
+    if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyV') {
+      e.preventDefault();
+      void pasteToTerminal(ptyId);
+      return false;
+    }
+    // 智能 Ctrl+C：有选区则复制并清除选区、无选区则透传 SIGINT
     if (mod && !e.shiftKey && !e.altKey && useAppStore.getState().config.smartCopyPaste) {
       if (e.code === 'KeyC') {
         if (term.hasSelection()) {
@@ -296,18 +301,6 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
         }
         return true;
       }
-      if (e.code === 'KeyV') {
-        e.preventDefault();
-        void pasteToTerminal(ptyId);
-        return false;
-      }
-    }
-    // Claude/Codex/OpenCode users expect Ctrl+V to paste inside the TUI even
-    // when the global smart copy/paste setting is disabled for ordinary shells.
-    if (mod && !e.shiftKey && !e.altKey && e.code === 'KeyV' && isAiPty(ptyId)) {
-      e.preventDefault();
-      void pasteToTerminal(ptyId);
-      return false;
     }
     return true;
   });
