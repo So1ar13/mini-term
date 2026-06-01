@@ -541,8 +541,9 @@ function navigateHistorySync(ptyId: number, term: Terminal, direction: 'up' | 'd
   const history = historyByShell.get(state.shellCommand);
   if (!history || history.length === 0) return false;
 
-  // 首次按下时：收集匹配列表并显示面板
+  // 首次按下时：仅上方向键打开面板，下方向键不拦截
   if (!state.listEl) {
+    if (direction !== 'up') return false;
     state.historyMatches = findMatches(state.currentInput, history, 50);
     if (state.historyMatches.length === 0) return false;
     state.listSelectedIndex = 0;
@@ -590,9 +591,9 @@ async function navigateHistory(ptyId: number, term: Terminal, direction: 'up' | 
 // Input interception
 // ---------------------------------------------------------------------------
 
-export function handleSuggestOnData(ptyId: number, term: Terminal, data: string): boolean {
+export function handleSuggestOnData(ptyId: number, term: Terminal, data: string, isAi = false): boolean {
   const state = getState(ptyId);
-  if (!state) return false;
+  if (!state || isAi) return false;
 
   // Right arrow: 接受建议（关闭列表）
   if (data === '\x1b[C' && state.activeSuggestion) {

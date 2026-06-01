@@ -318,7 +318,7 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   // scrollToBottom,用户往上翻历史时一切焦点(点别处或切回来)就会被打回底部。
   const onDataDisp = term.onData((data) => {
     // 自动建议系统拦截：Right 键接受建议 / Up/Down 浏览历史
-    if (handleSuggestOnData(ptyId, term, data)) {
+    if (handleSuggestOnData(ptyId, term, data, isAiPty(ptyId))) {
       return; // 事件已被建议系统消费
     }
 
