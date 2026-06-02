@@ -270,6 +270,12 @@ const RESIZE_COOLDOWN: Duration = Duration::from_millis(800);
 /// resize 响应更可控,保守对齐更稳妥。
 const FOCUS_COOLDOWN: Duration = Duration::from_millis(800);
 
+/// 用户输入回显冷却窗口
+///
+/// write_pty 后 ConPTY 会立即回显(echo)用户输入,这些输出不应被
+/// process_monitor 当作 AI 活跃信号。冷却窗口略长于典型 echo 延迟。
+const INPUT_ECHO_COOLDOWN: Duration = Duration::from_millis(500);
+
 /// 终端焦点事件的 CSI 序列(xterm.js 在 sendFocus 模式下写入 PTY)
 const FOCUS_IN_SEQ: &str = "\x1b[I";
 const FOCUS_OUT_SEQ: &str = "\x1b[O";
@@ -970,6 +976,8 @@ pub fn write_pty(
         let instance = instances.get_mut(&pty_id).ok_or("PTY not found")?;
         write_pty_chunked(&mut *instance.writer, &data)?;
     }
+    // 写入后立即开启冷却:ConPTY 回显(echo)不应被 process_monitor 误判为 AI 输出
+    state.bump_cooldown(pty_id, INPUT_ECHO_COOLDOWN);
     state.track_input_with_line_snapshot(pty_id, &data, line_snapshot.as_deref());
 
     for submit in state.drain_submits(pty_id) {
